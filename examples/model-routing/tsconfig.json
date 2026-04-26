@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2024",
+    "paths": {
+      "ai": ["../../packages/kernel/node_modules/ai"],
+      "@nanoagent/kernel": ["../../packages/kernel/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
