@@ -141,7 +141,7 @@ Hooks receive cloned, read-only args. They may return:
 
 ## Boundaries
 
-Model boundary resolves `model` string through provider registry, strips tool `execute` functions before `streamText`, streams `fullStream` as timestamped `stream_part` events, and commits canonical `AgentModelResult` after model completion. `callModel` middleware wraps committed model result boundary.
+Model boundary resolves `model` string through provider registry, strips tool `execute` functions before `streamText`, streams `fullStream` as timestamped `stream_part` events, and commits canonical `AgentModelResult` after model completion. `callModel` middleware wraps model execution before the committed result.
 
 Tool boundary executes accepted tool calls through original `ToolSet`. Tool throws and rejections become `AgentToolCallResponse` errors. They do not fail run by themselves. `callTool` middleware wraps each accepted tool execution.
 

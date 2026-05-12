@@ -39,7 +39,7 @@ Most agent SDKs expose a chat loop.
 
 That shape works for a CLI product that is meant to execute on a machine "single-player".
 
-`@nanoagent/kernel` solves "give me the smallest reliable state machine I can build a capable agent around." It owns only the state-machine boundary and gives the caller direct phase control. Real agent systems need to pause for human approval, resume in another process, route models per turn, retry model calls through middleware, persist state to their own store, and recover from crashes in the middle of tool execution.
+`@nanoagent/kernel` solves "give me the smallest reliable state machine I can build a capable agent around." It owns only the run-loop boundary and exposes explicit phase control. Real agent systems need to pause for human approval, resume in another process, route models per turn, retry model calls through middleware, persist state to their own store, and recover from crashes in the middle of tool execution.
 
 ## Scenarios
 

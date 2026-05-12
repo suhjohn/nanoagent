@@ -21,6 +21,14 @@ Before resume, `replayIdempotentChargeCalls` inspects saved state:
 
 See [src/index.ts](./src/index.ts).
 
+## Run
+
+```sh
+bun run start "Resume the idempotent charge and summarize the result."
+```
+
+The CLI seeds an interrupted in-flight `ChargeCard` call, replays it with same idempotency key, then resumes the model with real providers from `packages/kernel/.env`.
+
 ## Check
 
 ```sh

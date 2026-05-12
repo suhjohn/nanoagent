@@ -23,8 +23,10 @@ type MessageStore = {
 };
 
 type FallbackDeps = {
+  fallbackModel?: string;
   loadState(runId: string): Promise<AgentRunState<Context> | undefined>;
   messages: MessageStore;
+  model?: string;
   modelProviders: AgentModelProviders;
   saveState(runId: string, state: AgentRunState<Context>): Promise<void>;
   streamToClient(event: AgentStreamEvent): void;
@@ -78,22 +80,29 @@ const retryWithFallbackModel =
     throw new Error("retry attempts must be greater than zero");
   };
 
-function makeHooks(messages: MessageStore): AgentHooks<Context> {
+function makeHooks(params: {
+  messages: MessageStore;
+  model?: string;
+}): AgentHooks<Context> {
   return {
     onTurnPrepared: async ({ context }) => ({
       value: {
         model:
-          context.tenant === "enterprise"
-            ? "enterprise-gateway/claude-sonnet-4-6"
-            : "openai/gpt-5-nano",
-        messages: await messages.load(context.sessionId),
+          params.model ??
+          (context.tenant === "enterprise"
+            ? "openai/gpt-5.4-mini"
+            : "openai/gpt-5.4-mini"),
+        messages: await params.messages.load(context.sessionId),
       },
     }),
     onTurnCompleted: async ({ context, turn }) => {
       const modelResult = turn.modelResult;
       if (!modelResult) return;
 
-      await messages.append(context.sessionId, modelResult.response.messages);
+      await params.messages.append(
+        context.sessionId,
+        modelResult.response.messages,
+      );
     },
   };
 }
@@ -122,7 +131,10 @@ export async function runWithFallback(params: {
     state,
     tools: params.deps.tools,
     modelProviders: params.deps.modelProviders,
-    hooks: makeHooks(params.deps.messages),
+    hooks: makeHooks({
+      messages: params.deps.messages,
+      model: params.deps.model,
+    }),
     maxTurns: 10,
     saveState: async ({ state }) => {
       await params.deps.saveState(state.runId, state);
@@ -131,7 +143,7 @@ export async function runWithFallback(params: {
       callModel: [
         retryWithFallbackModel({
           attempts: 2,
-          fallbackModel: "anthropic/claude-opus-4-7",
+          fallbackModel: params.deps.fallbackModel ?? "openai/gpt-5.4-mini",
           sleep: params.sleep,
         }),
       ],

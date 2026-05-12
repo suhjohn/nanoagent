@@ -88,9 +88,9 @@ export type AgentModelArgs = AgentStreamTextOptions & {
 }
 
 // Un-normalized Vercel AI SDK streamText return. Available on onModelCompleted
-// and callModel middleware as an escape hatch for SDK-shaped fields kernel
+// and AgentCallModelResult as an escape hatch for SDK-shaped fields kernel
 // does not normalize (toolCalls, toolResults, steps, files). Not cloned, not
-// deep-frozen — kernel can't enforce immutability through methods and
+// deep-frozen because kernel cannot enforce immutability through methods and
 // promises.
 export type AgentRawModelResult = ReturnType<typeof streamText>
 
@@ -385,12 +385,17 @@ export type AgentModelCompletedArgs<CONTEXT extends JsonLike> =
   }
 
 export type AgentCallModelArgs<CONTEXT extends JsonLike> =
-  AgentModelCompletedArgs<CONTEXT> & {
-    pendingToolCalls: AgentToolCall[]
+  BaseHookArgs<CONTEXT> & {
+    args: AgentModelArgs
+    createdAt: string
+    turn: Turn
   }
 
 export type AgentCallModelResult = {
+  args: AgentModelArgs
+  duration: number
   pendingToolCalls: AgentToolCall[]
+  rawResult: AgentRawModelResult
   result: AgentModelResult
 }
 
@@ -428,15 +433,15 @@ export type AgentToolCallCompletedArgs<CONTEXT extends JsonLike> =
     input: unknown
     turn: Turn
   } & (
-    | {
-        output: unknown
-        error?: never
-      }
-    | {
-        error: unknown
-        output?: never
-      }
-  )
+      | {
+          output: unknown
+          error?: never
+        }
+      | {
+          error: unknown
+          output?: never
+        }
+    )
 
 export type AgentCallToolArgs<CONTEXT extends JsonLike> = {
   context: CONTEXT
@@ -488,14 +493,13 @@ export type AgentRunFailedArgs<CONTEXT extends JsonLike> =
     error: unknown
   }
 
-export type AgentPauseArgs<CONTEXT extends JsonLike> =
-  BaseHookArgs<CONTEXT> & {
-    createdAt: string
-    phase: AgentPhase
-    turn?: Turn
-    reason?: string
-    metadata?: JsonLike
-  }
+export type AgentPauseArgs<CONTEXT extends JsonLike> = BaseHookArgs<CONTEXT> & {
+  createdAt: string
+  phase: AgentPhase
+  turn?: Turn
+  reason?: string
+  metadata?: JsonLike
+}
 
 export type AgentModelRestartedArgs<CONTEXT extends JsonLike> =
   BaseHookArgs<CONTEXT> & {
@@ -1142,10 +1146,7 @@ export async function* runAgent<CONTEXT extends JsonLike>(
     }
   }
 
-  const snapshotState: Snapshotter<CONTEXT> = async (
-    nextSnapshot,
-    events
-  ) => {
+  const snapshotState: Snapshotter<CONTEXT> = async (nextSnapshot, events) => {
     const snapshotted = await Effect.runPromise(
       persistSnapshot({
         events,
@@ -1382,95 +1383,110 @@ export async function* runAgent<CONTEXT extends JsonLike>(
       return
     }
 
-    const {
-      model: modelName,
-      toolNames: _toolNames,
-      ...streamTextOptions
-    } = modelArgs
-    const model = await Effect.runPromise(
-      resolveModel({ model: modelName, modelProviders })
-    )
-    const rawResult = await Effect.runPromise(
-      Effect.try({
-        try: () =>
-          streamText({
-            ...streamTextOptions,
-            model,
-            tools: toModelTools(tools),
-            abortSignal: options.signal
-          } as Parameters<typeof streamText<ToolSet>>[0]),
-        catch: toError
-      })
-    )
-
-    for await (const part of rawResult.fullStream) {
-      await Effect.runPromise(checkNotAborted(options.signal))
-      const createdAt = nowIso()
-      await Effect.runPromise(
-        fromAgentResult(() =>
-          hooks.onStreamUpdate?.({
-            ...makeBaseArgs(snapshot),
-            createdAt,
-            part,
-            turn: cloneTurn(currentTurn)
-          })
-        )
-      )
-      const streamEvent: AgentStreamPartEvent = {
-        type: 'stream_part',
-        runId: snapshot.runId,
-        turnId: currentTurn.turnId,
-        turn: currentTurn.turn,
-        createdAt,
-        part
-      }
-      yield* emitEvents([streamEvent])
-    }
-
-    const modelResult = cloneModelResult(await buildModelResult(rawResult))
-    const pendingToolCalls =
-      modelResult.finishReason === 'tool-calls'
-        ? (
-            await Effect.runPromise(
-              Effect.tryPromise({
-                try: () => rawResult.toolCalls,
-                catch: toError
-              })
-            )
-          ).map(cloneToolCall)
-        : []
-
-    const completedAt = nowIso()
-    const duration = durationMs(modelStartedAt, completedAt)
+    const streamEvents: AgentStreamPartEvent[] = []
     const callModelResult = await Effect.runPromise(
       runMiddleware({
         input: {
           ...makeBaseArgs(snapshot),
           args: modelArgs,
-          createdAt: completedAt,
-          duration,
-          pendingToolCalls,
-          result: cloneModelResult(modelResult),
-          rawResult,
+          createdAt: modelStartedAt,
           turn: cloneTurn(currentTurn)
         },
         middleware: options.middleware?.callModel,
-        terminal: input => ({
-          pendingToolCalls: input.pendingToolCalls.map(cloneToolCall),
-          result: cloneModelResult(input.result)
-        })
+        terminal: async input => {
+          const {
+            model: modelName,
+            toolNames: _toolNames,
+            ...streamTextOptions
+          } = input.args
+          const model = await Effect.runPromise(
+            resolveModel({ model: modelName, modelProviders })
+          )
+          const rawResult = await Effect.runPromise(
+            Effect.try({
+              try: () =>
+                streamText({
+                  ...streamTextOptions,
+                  model,
+                  tools: toModelTools(tools),
+                  abortSignal: options.signal
+                } as Parameters<typeof streamText<ToolSet>>[0]),
+              catch: toError
+            })
+          )
+          const attemptStreamEvents: AgentStreamPartEvent[] = []
+
+          for await (const part of rawResult.fullStream) {
+            await Effect.runPromise(checkNotAborted(options.signal))
+            attemptStreamEvents.push({
+              type: 'stream_part',
+              runId: snapshot.runId,
+              turnId: currentTurn.turnId,
+              turn: currentTurn.turn,
+              createdAt: nowIso(),
+              part
+            })
+          }
+
+          const modelResult = cloneModelResult(
+            await buildModelResult(rawResult)
+          )
+          const pendingToolCalls =
+            modelResult.finishReason === 'tool-calls'
+              ? (
+                  await Effect.runPromise(
+                    Effect.tryPromise({
+                      try: () => rawResult.toolCalls,
+                      catch: toError
+                    })
+                  )
+                ).map(cloneToolCall)
+              : []
+          const completedAt = nowIso()
+
+          streamEvents.push(...attemptStreamEvents)
+          return {
+            args: {
+              ...input.args,
+              toolNames: [...input.args.toolNames]
+            },
+            duration: durationMs(input.createdAt, completedAt),
+            pendingToolCalls,
+            rawResult,
+            result: modelResult
+          }
+        }
       })
     )
+    const completedAt = nowIso()
+
+    for (const event of streamEvents) {
+      await Effect.runPromise(
+        fromAgentResult(() =>
+          hooks.onStreamUpdate?.({
+            ...makeBaseArgs(snapshot),
+            createdAt: event.createdAt,
+            part: event.part,
+            turn: cloneTurn(currentTurn)
+          })
+        )
+      )
+      yield* emitEvents([event])
+    }
+
     const modelCompletedHook = await Effect.runPromise(
       fromAgentResult(() =>
         hooks.onModelCompleted?.({
           ...makeBaseArgs(snapshot),
-          args: modelArgs,
+          args: callModelResult.args,
           createdAt: completedAt,
-          duration,
+          duration: callModelResult.duration,
           result: cloneModelResult(callModelResult.result),
-          rawResult,
-          turn: cloneTurn(currentTurn)
+          rawResult: callModelResult.rawResult,
+          turn: cloneTurn({
+            ...currentTurn,
+            modelArgs: callModelResult.args
+          })
         })
       )
     )
@@ -1482,6 +1498,7 @@ export async function* runAgent<CONTEXT extends JsonLike>(
 
     const nextTurn: Turn = {
       ...currentTurn,
+      modelArgs: callModelResult.args,
       modelResult: callModelResult.result,
       toolCalls: {
         pending: callModelResult.pendingToolCalls,
@@ -1502,8 +1519,8 @@ export async function* runAgent<CONTEXT extends JsonLike>(
           runId: snapshot.runId,
           revision: snapshot.revision,
           createdAt: completedAt,
-          duration,
-          args: modelArgs,
+          duration: callModelResult.duration,
+          args: callModelResult.args,
           result: cloneModelResult(callModelResult.result),
           turn: cloneTurn(nextTurn)
         }

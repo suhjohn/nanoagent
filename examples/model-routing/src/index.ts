@@ -1,6 +1,7 @@
 import type { ModelMessage, ToolSet } from "ai";
 import {
   type AgentHooks,
+  type AgentModelProviders,
   type AgentRunState,
   type AgentStreamEvent,
   type JsonLike,
@@ -39,6 +40,7 @@ type ModelRoutingDeps = {
     runId: string,
     state: AgentRunState<C>,
   ): Promise<void>;
+  modelProviders?: AgentModelProviders;
   streamToClient(event: AgentStreamEvent): void;
   tools: ToolSet;
 };
@@ -61,10 +63,10 @@ const perTurnHooks: AgentHooks<Context> = {
   onTurnPrepared: ({ context, turn }) => {
     const model =
       turn.turn === 1
-        ? "anthropic/claude-opus-4-7"
+        ? "openai/gpt-5.4-mini"
         : context.complexity === "hard"
-          ? "anthropic/claude-sonnet-4-6"
-          : "openai/gpt-5-nano";
+          ? "openai/gpt-5.4-mini"
+          : "openai/gpt-5.4-mini";
 
     return {
       value: {
@@ -85,6 +87,7 @@ const perTurnHooks: AgentHooks<Context> = {
 
 export async function runSupportAgent(params: {
   classifyPrompt: ModelRoutingDeps["classifyPrompt"];
+  modelProviders?: AgentModelProviders;
   runId: string;
   prompt: string;
   streamToClient: ModelRoutingDeps["streamToClient"];
@@ -100,6 +103,7 @@ export async function runSupportAgent(params: {
 
   for await (const event of runAgent<Context>({
     state,
+    modelProviders: params.modelProviders,
     hooks: perTurnHooks,
     maxTurns: 5,
     saveState: async ({ state }) => {
@@ -114,10 +118,10 @@ const tenantHooks: AgentHooks<TenantContext> = {
   onTurnPrepared: ({ context }) => {
     const model =
       context.tenantTier === "enterprise"
-        ? "enterprise-gateway/claude-opus-4-7"
+        ? "openai/gpt-5.4-mini"
         : context.tenantTier === "pro" && context.complexity === "hard"
-          ? "anthropic/claude-sonnet-4-6"
-          : "openai/gpt-5-nano";
+          ? "openai/gpt-5.4-mini"
+          : "openai/gpt-5.4-mini";
 
     return {
       value: {
@@ -164,6 +168,7 @@ export async function startOrResumeTenantRun(params: {
 
   for await (const event of runAgent<TenantContext>({
     state,
+    modelProviders: params.deps.modelProviders,
     tools: params.deps.tools,
     hooks: tenantHooks,
     maxTurns: 20,

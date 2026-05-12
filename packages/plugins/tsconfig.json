@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "declaration": true,
+    "ignoreDeprecations": "6.0",
+    "lib": ["ES2024", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noUncheckedIndexedAccess": true,
+    "outDir": "dist",
+    "paths": {
+      "@nanoagent/kernel": ["../kernel/dist/index.d.ts"]
+    },
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2024",
+    "typeRoots": ["../kernel/node_modules/@types", "../kernel/node_modules"],
+    "types": ["bun-types"]
+  },
+  "include": ["src/**/*.ts"]
+}

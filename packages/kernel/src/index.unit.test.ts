@@ -65,9 +65,7 @@ function makeSnapshotRecorder<CONTEXT extends JsonLike>() {
   }
 }
 
-function makeModelResult(
-  finishReason: string | undefined
-): AgentModelResult {
+function makeModelResult(finishReason: string | undefined): AgentModelResult {
   return {
     finishReason,
     response: {
@@ -847,6 +845,94 @@ describe('runAgent unit durability scenarios', () => {
     ).toMatchObject({
       output: 'a-output:wrapped'
     })
+  })
+
+  test('callModel middleware can retry with a replacement model', async () => {
+    const mockModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'ok' },
+            { type: 'text-end', id: 'text-1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              logprobs: undefined,
+              usage: {
+                inputTokens: {
+                  total: 1,
+                  noCache: 1,
+                  cacheRead: undefined,
+                  cacheWrite: undefined
+                },
+                outputTokens: {
+                  total: 1,
+                  text: 1,
+                  reasoning: undefined
+                }
+              }
+            }
+          ]
+        })
+      })
+    })
+    const recorder = makeSnapshotRecorder<UnitContext>()
+    let primaryCalls = 0
+
+    await collect(
+      runAgent({
+        saveState: recorder.saveState,
+        maxTurns: 1,
+        state: { context: baseContext() },
+        hooks: {
+          onTurnPrepared: () => ({
+            value: {
+              model: 'primary/model',
+              messages: [{ role: 'user', content: 'say ok' }]
+            }
+          })
+        },
+        modelProviders: {
+          primary: () => {
+            primaryCalls++
+            throw new Error('rate limit')
+          },
+          fallback: () => mockModel as never
+        },
+        middleware: {
+          callModel: [
+            async ({ input, next }) => {
+              try {
+                return await next(input)
+              } catch (error) {
+                if (
+                  !(error instanceof Error) ||
+                  !/rate limit/i.test(error.message)
+                ) {
+                  throw error
+                }
+
+                return next({
+                  ...input,
+                  args: {
+                    ...input.args,
+                    model: 'fallback/model'
+                  }
+                })
+              }
+            }
+          ]
+        }
+      })
+    )
+
+    expect(primaryCalls).toBe(1)
+    expect(mockModel.doStreamCalls).toHaveLength(1)
+    expect(recorder.latest()?.status.type).toBe('completed')
+    expect(lastCompletedTurn(recorder.latest())?.modelArgs?.model).toBe(
+      'fallback/model'
+    )
   })
 
   test('passes streamText options through turn preparation', async () => {

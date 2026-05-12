@@ -30,6 +30,14 @@ The same hook handles both the pause and the resume. Adding a tool to the approv
 
 See [src/index.ts](./src/index.ts).
 
+## Run
+
+```sh
+bun run start "Run the approved charge and summarize the result."
+```
+
+The CLI seeds a pending `ChargeCard` tool call, pauses for approval, approves it, executes the tool, then resumes the model with real providers from `packages/kernel/.env`.
+
 ## Check
 
 ```sh

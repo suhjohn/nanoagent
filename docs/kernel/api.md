@@ -411,7 +411,7 @@ type AgentModelResult = {
 type AgentRawModelResult = ReturnType<typeof streamText>;
 ```
 
-`AgentRawModelResult` is un-normalized Vercel AI SDK return. It is available to `onModelCompleted` and `callModel` middleware as `rawResult`. It is not cloned or deeply frozen. Use it for SDK-shaped fields kernel does not normalize, such as `toolCalls`, `toolResults`, `steps`, and `files`.
+`AgentRawModelResult` is un-normalized Vercel AI SDK return. It is available to `onModelCompleted` and as `rawResult` on `AgentCallModelResult`. It is not cloned or deeply frozen. Use it for SDK-shaped fields kernel does not normalize, such as `toolCalls`, `toolResults`, `steps`, and `files`.
 
 ## Tool Types
 
@@ -581,18 +581,22 @@ Hook arg additions:
 ## Middleware Boundary Types
 
 ```ts
-type AgentCallModelArgs<Context extends JsonLike> =
-  AgentModelCompletedArgs<Context> & {
-    pendingToolCalls: AgentToolCall[];
-  };
+type AgentCallModelArgs<Context extends JsonLike> = BaseHookArgs<Context> & {
+  args: AgentModelArgs;
+  createdAt: string;
+  turn: Turn;
+};
 
 type AgentCallModelResult = {
+  args: AgentModelArgs;
+  duration: number;
   pendingToolCalls: AgentToolCall[];
+  rawResult: AgentRawModelResult;
   result: AgentModelResult;
 };
 ```
 
-`callModel` middleware receives canonical model result, raw SDK result, and pending tool calls before `model_completed` state write. It can replace result or filter/modify pending tool calls.
+`callModel` middleware wraps provider execution before `model_completed` state write. It can retry, replace the model, cache output, replace result, or filter/modify pending tool calls.
 
 ```ts
 type AgentCallToolArgs<Context extends JsonLike> = {

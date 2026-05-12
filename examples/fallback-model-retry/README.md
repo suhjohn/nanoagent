@@ -13,7 +13,7 @@ Install a `callModel` middleware around every model call. On a retryable error, 
 `retryWithFallbackModel` wraps `next`:
 
 1. First attempt uses the model selected by `onTurnPrepared`.
-2. Retries rewrite `args.model` to `anthropic/claude-opus-4-7`.
+2. Retries rewrite `args.model` to `openai/gpt-5.4-mini`.
 3. Non-retryable errors and exhausted budgets rethrow immediately.
 
 `isRetryableProviderError` matches `rate limit`, `timeout`, and `temporarily unavailable`. Keep the predicate strict: replaying a successful model call can double-bill or trigger duplicate tool calls.
@@ -21,6 +21,14 @@ Install a `callModel` middleware around every model call. On a retryable error, 
 ## Source
 
 See [src/index.ts](./src/index.ts).
+
+## Run
+
+```sh
+bun run start "Explain model fallback retry in one sentence."
+```
+
+The CLI uses real providers from `packages/kernel/.env`.
 
 ## Check
 

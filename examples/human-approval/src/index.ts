@@ -86,7 +86,7 @@ function makeHooks(params: {
   return {
     onTurnPrepared: async () => ({
       value: {
-        model: "anthropic/claude-opus-4-7",
+        model: "openai/gpt-5.4-mini",
         messages: await params.messages.load(params.runId),
       },
     }),

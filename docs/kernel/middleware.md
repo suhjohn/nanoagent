@@ -27,7 +27,7 @@ type AgentMiddleware<Input, Output> = (args: {
 `AgentEffectResult<Output>`, so it can return output directly, promise-like output,
 or an `Effect`.
 
-`callModel` middleware wraps model result boundary:
+`callModel` middleware wraps model execution:
 
 ```ts
 import type {
@@ -42,9 +42,10 @@ type CallModelMiddleware<Context> = AgentMiddleware<
 >;
 ```
 
-`AgentCallModelArgs` carries completed model hook fields, including `rawResult`,
-plus `pendingToolCalls`. Return `AgentCallModelResult` with final model `result`
-and `pendingToolCalls`.
+`AgentCallModelArgs` carries prepared model `args`, `createdAt`, and `turn`.
+`next(input)` runs provider resolution, `streamText`, result normalization, and
+pending tool-call extraction. Return `AgentCallModelResult` with final `args`,
+`duration`, `rawResult`, canonical model `result`, and `pendingToolCalls`.
 
 `callTool` middleware wraps accepted tool execution:
 

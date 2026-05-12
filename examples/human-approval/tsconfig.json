@@ -9,6 +9,7 @@
     "target": "ES2024",
     "paths": {
       "ai": ["../../packages/kernel/node_modules/ai"],
+      "ai/*": ["../../packages/kernel/node_modules/ai/*"],
       "@nanoagent/kernel": ["../../packages/kernel/src/index.ts"]
     }
   },

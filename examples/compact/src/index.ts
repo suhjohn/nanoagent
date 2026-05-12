@@ -2,132 +2,99 @@ import type { ModelMessage } from "ai";
 import {
   type AgentHooks,
   type AgentModelProviders,
-  type AgentRunState,
   type AgentStreamEvent,
-  type JsonLike,
   runAgent,
 } from "@nanoagent/kernel";
+import {
+  appendContextMessages,
+  appendMessages,
+  createSession,
+  type Db,
+  getSession,
+  loadSessionContext,
+  loadState,
+  makeSaveState,
+  saveSessionContext,
+  type RunContext,
+} from "./db";
 
-type Context = {
-  [key: string]: JsonLike;
-  model: string;
-  sessionId: string;
-  userId: string;
-};
-
-type SessionMemory = {
-  messages: ModelMessage[];
-  summary?: string;
-};
-
-type MemoryStore = {
-  append(sessionId: string, messages: ModelMessage[]): Promise<void>;
-  load(sessionId: string): Promise<SessionMemory>;
-  replace(sessionId: string, memory: SessionMemory): Promise<void>;
-};
+export * from "./db";
 
 type CompactDeps = {
   compact(input: {
     messages: ModelMessage[];
-    previousSummary?: string;
+    turnTotalTokens: number;
   }): Promise<string>;
-  loadState(runId: string): Promise<AgentRunState<Context> | undefined>;
-  memory: MemoryStore;
+  db: Db;
   modelProviders?: AgentModelProviders;
-  saveState(runId: string, state: AgentRunState<Context>): Promise<void>;
   streamToClient(event: AgentStreamEvent): Promise<void> | void;
 };
 
 type CompactPolicy = {
-  compactAfterMessages: number;
+  compactAfterTurnTokens: number;
   keepRecentMessages: number;
 };
 
 const defaultPolicy = {
-  compactAfterMessages: 16,
+  compactAfterTurnTokens: 8_000,
   keepRecentMessages: 6,
 } satisfies CompactPolicy;
 
-function withSummary(memory: SessionMemory) {
-  if (!memory.summary) return memory.messages;
-
-  return [
-    {
-      role: "system",
-      content: `Conversation summary:\n${memory.summary}`,
-    } satisfies ModelMessage,
-    ...memory.messages,
-  ];
-}
-
-async function loadCompactedMemory(params: {
+async function compactContextAfterTurn(params: {
   compact: CompactDeps["compact"];
-  memory: MemoryStore;
+  db: Db;
   policy: CompactPolicy;
   sessionId: string;
+  turnTotalTokens: number;
 }) {
-  const memory = await params.memory.load(params.sessionId);
-  if (memory.messages.length <= params.policy.compactAfterMessages) {
-    return memory;
-  }
+  const context = loadSessionContext(params.db, params.sessionId);
+  if (params.turnTotalTokens < params.policy.compactAfterTurnTokens) return;
 
   const compactAt = Math.max(
     0,
-    memory.messages.length - params.policy.keepRecentMessages,
+    context.length - params.policy.keepRecentMessages,
   );
-  const previous = memory.messages.slice(0, compactAt);
-  const recent = memory.messages.slice(compactAt);
+  if (compactAt === 0) return;
+
+  const previous = context.slice(0, compactAt);
+  const recent = context.slice(compactAt);
   const summary = await params.compact({
-    previousSummary: memory.summary,
     messages: previous,
+    turnTotalTokens: params.turnTotalTokens,
   });
-  const compacted = { summary, messages: recent } satisfies SessionMemory;
-  await params.memory.replace(params.sessionId, compacted);
-  return compacted;
+
+  saveSessionContext(params.db, {
+    sessionId: params.sessionId,
+    context: [
+      {
+        role: "system",
+        content: `Conversation summary:\n${summary}`,
+      },
+      ...recent,
+    ],
+  });
 }
 
-function makeHooks(params: {
-  compact: CompactDeps["compact"];
-  memory: MemoryStore;
-  policy: CompactPolicy;
-}): AgentHooks<Context> {
-  return {
-    onTurnPrepared: async ({ context }) => {
-      const memory = await loadCompactedMemory({
-        compact: params.compact,
-        memory: params.memory,
-        policy: params.policy,
-        sessionId: context.sessionId,
-      });
-
-      return {
-        value: {
-          model: context.model,
-          messages: withSummary(memory),
-        },
-      };
-    },
-
-    onTurnCompleted: async ({ context, turn }) => {
-      const modelResult = turn.modelResult;
-      if (!modelResult) return;
-
-      await params.memory.append(
-        context.sessionId,
-        modelResult.response.messages,
-      );
-    },
-  };
-}
-
-export async function appendUserMessage(params: {
+export function appendUserMessage(params: {
   content: string;
-  memory: MemoryStore;
+  db: Db;
+  runId?: string;
   sessionId: string;
 }) {
-  await params.memory.append(params.sessionId, [
-    { role: "user", content: params.content },
-  ]);
+  const message = {
+    role: "user",
+    content: params.content,
+  } satisfies ModelMessage;
+  appendMessages(params.db, {
+    sessionId: params.sessionId,
+    runId: params.runId,
+    messages: [message],
+  });
+  appendContextMessages(params.db, {
+    sessionId: params.sessionId,
+    messages: [message],
+  });
+  return message;
 }
 
 export async function runCompactAgent(params: {
@@ -138,29 +105,67 @@ export async function runCompactAgent(params: {
   sessionId: string;
   userId: string;
 }) {
-  const saved = await params.deps.loadState(params.runId);
+  const existing = getSession(params.deps.db, params.sessionId);
+  const session =
+    existing ??
+    createSession(params.deps.db, {
+      id: params.sessionId,
+      model: params.model ?? "openai/gpt-5.4-mini",
+      userId: params.userId,
+    });
+  const saved = loadState(params.deps.db, params.runId);
   const state = saved ?? {
     runId: params.runId,
     context: {
-      model: params.model ?? "openai/gpt-5-nano",
+      model: params.model ?? session.model,
       sessionId: params.sessionId,
       userId: params.userId,
     },
   };
   const policy = { ...defaultPolicy, ...params.policy };
+  const hooks = {
+    onTurnPrepared: ({ context }) => ({
+      value: {
+        model: context.model,
+        messages: loadSessionContext(params.deps.db, context.sessionId),
+      },
+    }),
 
-  for await (const event of runAgent<Context>({
+    onTurnCompleted: async ({ context, turn }) => {
+      const modelResult = turn.modelResult;
+      if (!modelResult) return;
+      const messages = modelResult.response.messages;
+      const turnTotalTokens =
+        modelResult.totalUsage.totalTokens ??
+        (modelResult.totalUsage.inputTokens ?? 0) +
+          (modelResult.totalUsage.outputTokens ?? 0);
+
+      appendMessages(params.deps.db, {
+        sessionId: context.sessionId,
+        runId: params.runId,
+        messages,
+      });
+      appendContextMessages(params.deps.db, {
+        sessionId: context.sessionId,
+        messages,
+      });
+
+      await compactContextAfterTurn({
+        compact: params.deps.compact,
+        db: params.deps.db,
+        policy,
+        sessionId: context.sessionId,
+        turnTotalTokens,
+      });
+    },
+  } satisfies AgentHooks<RunContext>;
+
+  for await (const event of runAgent<RunContext>({
     state,
     modelProviders: params.deps.modelProviders,
-    hooks: makeHooks({
-      compact: params.deps.compact,
-      memory: params.deps.memory,
-      policy,
-    }),
+    hooks,
     maxTurns: 1,
-    saveState: async ({ state }) => {
-      await params.deps.saveState(state.runId, state);
-    },
+    saveState: makeSaveState(params.deps.db),
   })) {
     await params.deps.streamToClient(event);
   }

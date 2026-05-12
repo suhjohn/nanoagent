@@ -135,7 +135,7 @@ export async function startOrResume(params: {
     hooks: {
       onTurnPrepared: async ({ context }) => ({
         value: {
-          model: "openai/gpt-5",
+          model: "openai/gpt-5.4-mini",
           messages: await params.deps.messages.load(context.sessionId),
         },
       }),
