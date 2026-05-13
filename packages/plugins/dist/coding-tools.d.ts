@@ -1,7 +1,10 @@
-import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel';
-type AgentPlugin<CONTEXT extends JsonLike> = (options: RunAgentOptions<CONTEXT>) => RunAgentOptions<CONTEXT>;
+import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
+type AgentPlugin<CONTEXT extends JsonLike> = (
+  options: RunAgentOptions<CONTEXT>
+) => RunAgentOptions<CONTEXT>
+export type CodingTool = 'read' | 'write' | 'list' | 'grep' | 'shell' | 'patch'
 export declare function withCodingTools<CONTEXT extends JsonLike>(params: {
-    cwd: string;
-    enabled?: readonly ('read' | 'write' | 'list' | 'grep' | 'shell' | 'patch')[];
-}): AgentPlugin<CONTEXT>;
-export {};
+  cwd: string
+  enabled?: readonly CodingTool[]
+}): AgentPlugin<CONTEXT>
+export {}

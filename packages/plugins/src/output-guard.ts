@@ -1,3 +1,7 @@
+// Origin:
+// - Codex/OpenAI runtime output capture guard behavior
+// - Pi: packages/coding-agent/src/modes/interactive output/status rendering safeguards
+// Behavior: temporarily suppress raw stdout writes and flush captured chunks after guarded work.
 type WriteCallback = (error?: Error | null) => void
 
 type Write = (chunk: string, callback?: WriteCallback) => boolean
@@ -46,9 +50,7 @@ export async function flushRawStdout() {
   })
 }
 
-function redirectToStderr(
-  stderrWrite: Write
-): typeof process.stdout.write {
+function redirectToStderr(stderrWrite: Write): typeof process.stdout.write {
   return ((
     chunk: string | Uint8Array,
     encodingOrCallback?: BufferEncoding | WriteCallback,

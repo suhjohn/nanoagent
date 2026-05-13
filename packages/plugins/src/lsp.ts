@@ -215,8 +215,7 @@ export function createNodeLspClient(params: NodeLspClientParams): LspClient {
       root: args.root,
       settings: args.config.settings,
       timeoutMs: requestTimeoutMs,
-      onNotification: message =>
-        handlePublishDiagnostics({ runtime, message })
+      onNotification: message => handlePublishDiagnostics({ runtime, message })
     })
     runtime.initialized = initializeRuntime(runtime).catch(error => {
       runtime.broken = error instanceof Error ? error : new Error(String(error))
@@ -227,10 +226,7 @@ export function createNodeLspClient(params: NodeLspClientParams): LspClient {
   }
 
   async function initializeRuntime(runtime: Runtime) {
-    await runtime.connection.request(
-      'initialize',
-      initializeParams(runtime)
-    )
+    await runtime.connection.request('initialize', initializeParams(runtime))
     runtime.connection.notify('initialized', {})
   }
 
@@ -275,9 +271,7 @@ export function createNodeLspClient(params: NodeLspClientParams): LspClient {
     },
 
     close: async () => {
-      await Promise.all(
-        [...runtimes.values()].map(shutdownRuntime)
-      )
+      await Promise.all([...runtimes.values()].map(shutdownRuntime))
       runtimes.clear()
     }
   }
@@ -539,11 +533,7 @@ async function requestOperation(args: {
   }
 }
 
-async function requestArray(
-  runtime: Runtime,
-  method: string,
-  params: unknown
-) {
+async function requestArray(runtime: Runtime, method: string, params: unknown) {
   return toArray(await runtime.connection.request(method, params))
 }
 

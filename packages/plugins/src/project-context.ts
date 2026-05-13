@@ -1,3 +1,7 @@
+// Origin:
+// - Codex: codex-rs/core/src/project_doc.rs, config instructions loading
+// - Pi: packages/coding-agent/src/core/resource-loader.ts, system-prompt.ts
+// Behavior: discover AGENTS/CLAUDE context files from project ancestors and prepend them to system context.
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {

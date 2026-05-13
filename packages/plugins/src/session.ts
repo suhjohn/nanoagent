@@ -1,3 +1,7 @@
+// Origin:
+// - Codex: codex-rs/core/src/session/session.rs event emission and rollout persistence
+// - OpenCode: packages/opencode/src/session/session.ts message/session persistence
+// Behavior: session store, event sink, and transcript recorder hooks over kernel lifecycle.
 import type {
   AgentPhaseEvent,
   AgentRunState,

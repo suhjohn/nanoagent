@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/permission/index.ts, config/permission.ts
+// - Codex: codex-rs/core/src/tools/sandboxing.rs, session granted permissions
+// Behavior: infer tool permission requests, evaluate ordered allow/deny rules, and optionally remember user grants.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (
@@ -63,7 +67,9 @@ export function evaluatePermissionRules(params: {
     if (rule.permission !== params.permission && rule.permission !== '*') {
       continue
     }
-    if (!params.patterns.some(pattern => wildcardMatch(rule.pattern, pattern))) {
+    if (
+      !params.patterns.some(pattern => wildcardMatch(rule.pattern, pattern))
+    ) {
       continue
     }
     decision = rule.action
@@ -133,10 +139,7 @@ export function withRequestPermissionsTool<CONTEXT extends JsonLike>(
       },
       ['permission', 'patterns']
     ),
-    execute: (
-      input: unknown,
-      options: { experimental_context?: CONTEXT }
-    ) => {
+    execute: (input: unknown, options: { experimental_context?: CONTEXT }) => {
       const record = assertRecord(input, toolName)
       return params.grant({
         permission: stringField(record, 'permission'),
@@ -178,10 +181,12 @@ function defaultPermissionRequest(
 }
 
 function defaultPattern(permission: string, input: unknown): string {
-  const record = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const record =
+    input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
   if (typeof record.path === 'string') return record.path
   if (typeof record.filePath === 'string') return record.filePath
-  if (typeof record.cmd === 'string') return record.cmd.split(/\s+/)[0] || permission
+  if (typeof record.cmd === 'string')
+    return record.cmd.split(/\s+/)[0] || permission
   return permission
 }
 

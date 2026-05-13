@@ -1,34 +1,49 @@
-// @ts-nocheck
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, test } from 'bun:test'
 import type {
+  AgentModelArgs,
   AgentModelCompletedArgs,
   AgentTurnStartedArgs,
+  AgentTurnPreparedValue,
   JsonLike,
   RunAgentOptions
 } from '@nanoagent/kernel'
 import {
   collectSkillMentions,
+  createFileJsonlSessionRepo,
+  createMemoryModelAuthStore,
+  createRpcHandler,
   createNodeLspClient,
+  attachJsonlLineReader,
   applyPatch,
+  expandPromptTemplate,
   withFilesystemTools,
+  loadPluginConfig,
   withCodexCompaction,
   withCodexSkills,
   diagnosticsAfterEdit,
   createMemoryGoalStore,
   withModelRetry,
+  withModelAuth,
   withGoalTools,
+  withJsonlSession,
   withLspTool,
   withOpenCodeCompaction,
   withOpenCodeSkills,
   withPlanTool,
+  withPromptTemplates,
+  pluginsFromConfig,
   withQuestionTool,
   withShellTool,
+  withSubagentTools,
   withSystemPrompt,
+  withTurnQueue,
   withToolConcurrency,
+  withToolErrorBoundary,
   withToolPermission
 } from './index.js'
 
@@ -57,9 +72,19 @@ describe('plugins', () => {
       })
     })
     const configured = plugin(options())
-    const output = await configured.tools!.question!.execute!(
+    const output = await configured.tools!.request_user_input!.execute!(
       {
-        questions: [{ id: 'choice', header: 'Choice', question: 'Pick one?' }]
+        questions: [
+          {
+            id: 'choice',
+            header: 'Choice',
+            question: 'Pick one?',
+            options: [
+              { label: 'A', description: 'Choose A.' },
+              { label: 'B', description: 'Choose B.' }
+            ]
+          }
+        ]
       },
       {
         toolCallId: 'call',
@@ -69,7 +94,9 @@ describe('plugins', () => {
     )
 
     expect(output).toEqual({ answers: { choice: 'ctx' } })
-    expect(configured.tools!.question!.description).toContain('Ask user')
+    expect(configured.tools!.request_user_input!.description).toContain(
+      'Request user input'
+    )
   })
 
   test('plan tool rejects multiple active items', async () => {
@@ -78,7 +105,7 @@ describe('plugins', () => {
     })(options())
 
     await expect(async () => {
-      await configured.tools!.plan!.execute!(
+      await configured.tools!.update_plan!.execute!(
         {
           plan: [
             { step: 'a', status: 'in_progress' },
@@ -88,6 +115,186 @@ describe('plugins', () => {
         { toolCallId: 'call', messages: [] }
       )
     }).toThrow('at most one')
+  })
+
+  test('subagent tools use codex field names and validate message versus items', async () => {
+    const calls: Array<[string, unknown]> = []
+    const configured = withSubagentTools<Context>({
+      spawn: input => {
+        calls.push(['spawn', input])
+        return { agent_id: 'agent-1', nickname: null }
+      },
+      send: input => {
+        calls.push(['send', input])
+        return { submission_id: 'submission-1' }
+      },
+      wait: input => {
+        calls.push(['wait', input])
+        return { agent_statuses: {} }
+      },
+      resume: input => {
+        calls.push(['resume', input])
+        return { status: 'running' }
+      },
+      close: input => {
+        calls.push(['close', input])
+        return { status: 'shutdown' }
+      }
+    })(options())
+
+    await configured.tools!.spawn_agent!.execute!(
+      {
+        message: 'inspect auth',
+        agent_type: 'explorer',
+        reasoning_effort: 'medium'
+      },
+      { toolCallId: 'spawn', messages: [], experimental_context: { id: 'ctx' } }
+    )
+    await configured.tools!.send_input!.execute!(
+      { target: 'agent-1', items: [{ type: 'text', text: 'continue' }] },
+      { toolCallId: 'send', messages: [], experimental_context: { id: 'ctx' } }
+    )
+    await configured.tools!.wait_agent!.execute!(
+      { targets: ['agent-1'], timeout_ms: 10_000 },
+      { toolCallId: 'wait', messages: [], experimental_context: { id: 'ctx' } }
+    )
+    await configured.tools!.resume_agent!.execute!(
+      { id: 'agent-1' },
+      {
+        toolCallId: 'resume',
+        messages: [],
+        experimental_context: { id: 'ctx' }
+      }
+    )
+    await configured.tools!.close_agent!.execute!(
+      { target: 'agent-1' },
+      { toolCallId: 'close', messages: [], experimental_context: { id: 'ctx' } }
+    )
+
+    expect(() =>
+      configured.tools!.spawn_agent!.execute!(
+        { message: 'x', items: [{ type: 'text', text: 'y' }] },
+        { toolCallId: 'bad', messages: [] }
+      )
+    ).toThrow('exactly one')
+    expect(() =>
+      configured.tools!.spawn_agent!.execute!(
+        { message: 'x', fork_context: true, agent_type: 'explorer' },
+        { toolCallId: 'bad', messages: [] }
+      )
+    ).toThrow('inherit')
+    expect(calls.map(call => call[0])).toEqual([
+      'spawn',
+      'send',
+      'wait',
+      'resume',
+      'close'
+    ])
+    expect(calls[0]?.[1]).toMatchObject({
+      message: 'inspect auth',
+      agentType: 'explorer',
+      reasoningEffort: 'medium',
+      context: { id: 'ctx' }
+    })
+    expect(calls[1]?.[1]).toMatchObject({
+      target: 'agent-1',
+      items: [{ type: 'text', text: 'continue' }],
+      interrupt: false
+    })
+  })
+
+  test('turn queue drains steering and follow-up into prepared messages', async () => {
+    const steering = ['steer-1', 'steer-2']
+    const followUp = ['follow-1', 'follow-2']
+    const configured = withTurnQueue<Context>({
+      mode: 'one-at-a-time',
+      store: {
+        steering: async () => steering,
+        shiftSteering: async (_context, count) => {
+          steering.splice(0, count)
+        },
+        followUp: async () => followUp,
+        shiftFollowUp: async (_context, count) => {
+          followUp.splice(0, count)
+        }
+      }
+    })(options())
+
+    const prepared = (await configured.hooks.onTurnPrepared({
+      context: { id: 'ctx' },
+      state: {
+        runId: 'run',
+        revision: 0,
+        status: { type: 'running', phase: 'turn_prepared' },
+        context: { id: 'ctx' },
+        turns: [],
+        updatedAt: new Date(0).toISOString()
+      },
+      runId: 'run',
+      createdAt: new Date(0).toISOString(),
+      turn: {
+        turnId: 'turn',
+        turn: 0,
+        toolCalls: { pending: [], inFlight: [], completed: [] }
+      }
+    })) as { value: AgentTurnPreparedValue }
+
+    expect(prepared.value.messages).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'user', content: 'steer-1' },
+      { role: 'user', content: 'follow-1' }
+    ])
+    expect(steering).toEqual(['steer-2'])
+    expect(followUp).toEqual(['follow-2'])
+  })
+
+  test('jsonl session replays stored transcript before current prompt', async () => {
+    const appended: unknown[] = []
+    const configured = withJsonlSession<Context>({
+      sessionId: 'session-1',
+      repo: {
+        entries: async () => [
+          {
+            id: 'm1',
+            type: 'message',
+            message: { role: 'user', content: 'prior user' }
+          },
+          {
+            id: 'm2',
+            type: 'custom',
+            message: { role: 'assistant', content: 'prior assistant' }
+          }
+        ],
+        append: async (_sessionId, entries) => {
+          appended.push(...entries)
+        }
+      }
+    })(options())
+
+    const prepared = (await configured.hooks.onTurnPrepared({
+      context: { id: 'ctx' },
+      state: {
+        runId: 'run',
+        revision: 0,
+        status: { type: 'running', phase: 'turn_prepared' },
+        context: { id: 'ctx' },
+        turns: [],
+        updatedAt: new Date(0).toISOString()
+      },
+      runId: 'run',
+      createdAt: new Date(0).toISOString(),
+      turn: {
+        turnId: 'turn',
+        turn: 0,
+        toolCalls: { pending: [], inFlight: [], completed: [] }
+      }
+    })) as { value: AgentTurnPreparedValue }
+
+    expect(prepared.value.messages).toEqual([
+      { role: 'user', content: 'prior user' },
+      { role: 'assistant', content: 'prior assistant' },
+      { role: 'user', content: 'hello' }
+    ])
   })
 
   test('filesystem tools execute inside root', async () => {
@@ -296,6 +503,95 @@ describe('plugins', () => {
       role: 'system',
       content: 'system text'
     })
+  })
+
+  test('prompt templates expand slash commands into real turn input', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'prompt-templates-'))
+    await writeFile(
+      path.join(root, 'fix.md'),
+      [
+        '---',
+        'description: Fix requested file.',
+        '---',
+        'Fix $1 with $ARGUMENTS and ${@:2:2}.'
+      ].join('\n')
+    )
+    const configured = withPromptTemplates<Context>({
+      dirs: [root],
+      getInput: () => '/fix src/index.ts "broken test"'
+    })(options())
+    const prepared = await runPrepared(configured)
+
+    expect(
+      prepared.value?.messages?.map(message => message.content).at(-1)
+    ).toBe('Fix src/index.ts with src/index.ts broken test and broken test.')
+    expect(expandPromptTemplate('Run $@', ['a', 'b'])).toBe('Run a b')
+  })
+
+  test('config plugin loads and composes native coding tools and permissions', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plugin-config-'))
+    const file = path.join(root, 'config.json')
+    await writeFile(
+      file,
+      JSON.stringify({
+        cwd: root,
+        tools: ['read'],
+        projectContext: false,
+        permissions: [{ permission: 'read', pattern: '*', action: 'deny' }]
+      })
+    )
+    const config = await loadPluginConfig(file)
+    const configured = pluginsFromConfig<Context>({
+      config,
+      askPermission: () => ({ action: 'allow' })
+    })(options())
+    const result = await configured.middleware?.callTool?.[0]?.({
+      input: {
+        ...toolInput({ id: 'ctx' }),
+        toolCall: {
+          toolCallId: 'read',
+          toolName: 'read',
+          input: { path: 'a.txt' }
+        }
+      },
+      next: async () => response('unreachable')
+    })
+
+    expect(Object.keys(configured.tools ?? {}).sort()).toEqual(['read'])
+    expect(result).toMatchObject({
+      output: { denied: true, reason: 'Denied by permission rule.' }
+    })
+  })
+
+  test('file jsonl session repo persists entries and run state', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'jsonl-session-'))
+    const repo = createFileJsonlSessionRepo<Context>({ dir: root })
+    await repo.append('session/1', [
+      {
+        id: 'm1',
+        type: 'message',
+        message: { role: 'user', content: 'hello' }
+      }
+    ])
+    await repo.saveRun?.({
+      runId: 'run/1',
+      revision: 0,
+      status: { type: 'running', phase: 'turn_started' },
+      context: { id: 'ctx' },
+      turns: [],
+      updatedAt: new Date(0).toISOString()
+    })
+
+    expect(await repo.entries('session/1')).toEqual([
+      {
+        id: 'm1',
+        type: 'message',
+        message: { role: 'user', content: 'hello' }
+      }
+    ])
+    expect(
+      await readFile(path.join(root, 'run_1.state.json'), 'utf8')
+    ).toContain('"runId": "run/1"')
   })
 
   test('opencode skills add catalog and explicit skill tool', async () => {
@@ -707,6 +1003,25 @@ describe('plugins', () => {
     })
   })
 
+  test('tool error boundary returns structured tool errors', async () => {
+    const configured = withToolErrorBoundary<Context>(
+      ({ error, toolName }) => ({
+        toolName,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    )(options())
+    const result = await configured.middleware?.callTool?.[0]?.({
+      input: toolInput({ id: 'ctx' }),
+      next: async () => {
+        throw new Error('bad tool')
+      }
+    })
+
+    expect(result).toMatchObject({
+      error: { toolName: 'tool', message: 'bad tool' }
+    })
+  })
+
   test('tool concurrency serializes same key', async () => {
     const events: string[] = []
     const configured = withToolConcurrency<Context>()(options())
@@ -783,6 +1098,60 @@ describe('plugins', () => {
     expect(calls).toBe(2)
     expect((result as { duration?: number } | undefined)?.duration).toBe(1)
   })
+
+  test('model auth resolves provider token before model call', async () => {
+    const applied: Array<{ provider: string; token: string }> = []
+    const configured = withModelAuth<Context>({
+      auth: createMemoryModelAuthStore({
+        apiKeys: { OpenAI: 'sk-test' }
+      }),
+      apply: token => {
+        applied.push(token)
+      }
+    })(options())
+
+    await configured.middleware?.callModel?.[0]?.({
+      input: {
+        context: { id: 'ctx' },
+        state: {} as never,
+        runId: 'run',
+        createdAt: new Date(0).toISOString(),
+        turn: {} as never,
+        args: { model: 'openai/gpt-5', toolNames: [], messages: [] }
+      },
+      next: async input => modelResult(input.args)
+    })
+
+    expect(applied).toEqual([{ provider: 'openai', token: 'sk-test' }])
+  })
+
+  test('jsonl rpc reads commands and writes success and error responses', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', chunk => chunks.push(String(chunk)))
+    const handler = createRpcHandler({
+      output,
+      handle: command => {
+        if (command.type === 'fail') throw new Error('nope')
+        return { ok: command.type }
+      }
+    })
+    const seen: string[] = []
+    const detach = attachJsonlLineReader(input, command => {
+      seen.push(command.type)
+      void handler(command)
+    })
+
+    input.write('{"id":1,"type":"ping"}\n')
+    input.write('{"id":2,"type":"fail"}\n')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    detach()
+
+    expect(seen).toEqual(['ping', 'fail'])
+    expect(chunks.join('')).toContain('"success":true')
+    expect(chunks.join('')).toContain('"success":false')
+  })
 })
 
 function toolInput(context: Context) {
@@ -800,6 +1169,37 @@ function response(value: string) {
     toolName: 'tool',
     input: {},
     output: value
+  }
+}
+
+function modelResult(args: AgentModelArgs) {
+  return {
+    args,
+    duration: 1,
+    pendingToolCalls: [],
+    rawResult: {} as never,
+    result: {
+      response: {
+        id: 'r',
+        modelId: args.model,
+        timestamp: new Date(),
+        messages: []
+      },
+      totalUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        inputTokenDetails: {
+          noCacheTokens: undefined,
+          cacheReadTokens: undefined,
+          cacheWriteTokens: undefined
+        },
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: undefined
+        }
+      }
+    }
   }
 }
 

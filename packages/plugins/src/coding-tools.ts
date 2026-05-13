@@ -1,4 +1,7 @@
-// @ts-nocheck
+// Origin:
+// - OpenCode: packages/opencode/src/tool/registry.ts
+// - Codex: codex-rs/core/src/tools/spec.rs, spec_plan.rs
+// Behavior: compose filesystem, shell, and patch tools into a coding-agent tool bundle.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 import { withFilesystemTools } from './filesystem.js'
 import { withShellTool } from './shell.js'
@@ -8,10 +11,15 @@ type AgentPlugin<CONTEXT extends JsonLike> = (
   options: RunAgentOptions<CONTEXT>
 ) => RunAgentOptions<CONTEXT>
 
-type CodingTool = 'read' | 'write' | 'list' | 'grep' | 'shell' | 'patch'
+export type CodingTool = 'read' | 'write' | 'list' | 'grep' | 'shell' | 'patch'
 
 const DEFAULT_TOOLS: readonly CodingTool[] = ['read', 'write', 'grep', 'shell']
-const FILESYSTEM_TOOLS: readonly CodingTool[] = ['read', 'write', 'list', 'grep']
+const FILESYSTEM_TOOLS: readonly CodingTool[] = [
+  'read',
+  'write',
+  'list',
+  'grep'
+]
 
 export function withCodingTools<CONTEXT extends JsonLike>(params: {
   cwd: string
@@ -48,6 +56,6 @@ function nameOrDisabled(
   enabled: Set<CodingTool>,
   flag: CodingTool,
   name: string
-): string {
-  return enabled.has(flag) ? name : `__disabled_${name}`
+): string | false {
+  return enabled.has(flag) ? name : false
 }

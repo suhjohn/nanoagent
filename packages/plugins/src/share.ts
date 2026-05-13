@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/share/share-next.ts
+// - Pi: packages/coding-agent/src/config.ts share viewer/session sync settings
+// Behavior: debounce save-state events into caller-owned share sync client.
 import type {
   AgentPhaseEvent,
   AgentRunState,

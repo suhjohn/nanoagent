@@ -326,7 +326,8 @@ async function readOpenCodeSkillUrl(url: string): Promise<SkillReadResult> {
     raw,
     filePath: url,
     fallbackName,
-    missingMessage: 'Skill URL requires string name and description frontmatter.'
+    missingMessage:
+      'Skill URL requires string name and description frontmatter.'
   })
 }
 
@@ -356,7 +357,12 @@ function skillFromRaw(params: {
   }
   return {
     diagnostics: [],
-    skill: { name, description, content: body.trim(), filePath: params.filePath }
+    skill: {
+      name,
+      description,
+      content: body.trim(),
+      filePath: params.filePath
+    }
   }
 }
 

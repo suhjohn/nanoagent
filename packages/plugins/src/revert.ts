@@ -1,3 +1,6 @@
+// Origin:
+// - OpenCode: packages/opencode/src/session/revert.ts, snapshot/index.ts
+// Behavior: expose session revert/unrevert tools backed by caller-owned snapshot store.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (
@@ -88,10 +91,7 @@ function objectSchema(
   }
 }
 
-function assertRecord(
-  input: unknown,
-  name: string
-): Record<string, unknown> {
+function assertRecord(input: unknown, name: string): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error(`${name} input must be an object.`)
   }

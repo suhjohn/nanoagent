@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/tool/read.ts, write.ts, edit.ts, glob.ts, grep.ts
+// - Pi: packages/coding-agent/src/core/tools/read.ts, write.ts, edit.ts, grep.ts
+// Behavior: rooted workspace file read/write/edit/list/search tools with binary skips and exact-edit validation.
 import { constants } from 'node:fs'
 import {
   access,
@@ -47,11 +51,11 @@ type JsonSchema =
 
 export type FilesystemPluginOptions = {
   root: string
-  readToolName?: string
-  writeToolName?: string
-  editToolName?: string
-  listToolName?: string
-  grepToolName?: string
+  readToolName?: string | false
+  writeToolName?: string | false
+  editToolName?: string | false
+  listToolName?: string | false
+  grepToolName?: string | false
 }
 
 const SKIPPED_DIRS = new Set(['node_modules', '.git'])
@@ -61,18 +65,27 @@ export function withFilesystemTools<CONTEXT extends JsonLike>(
 ): AgentPlugin<CONTEXT> {
   const root = path.resolve(options.root)
 
-  const tools: ToolSet<CONTEXT> = {
-    [options.readToolName ?? 'read_file']: readFileTool<CONTEXT>(root),
-    [options.writeToolName ?? 'write_file']: writeFileTool<CONTEXT>(root),
-    [options.editToolName ?? 'edit_file']: editFileTool<CONTEXT>(root),
-    [options.listToolName ?? 'list_files']: listFilesTool<CONTEXT>(root),
-    [options.grepToolName ?? 'grep_files']: grepFilesTool<CONTEXT>(root)
-  }
+  const tools: ToolSet<CONTEXT> = {}
+  addTool(tools, options.readToolName, 'read_file', readFileTool(root))
+  addTool(tools, options.writeToolName, 'write_file', writeFileTool(root))
+  addTool(tools, options.editToolName, 'edit_file', editFileTool(root))
+  addTool(tools, options.listToolName, 'list_files', listFilesTool(root))
+  addTool(tools, options.grepToolName, 'grep_files', grepFilesTool(root))
 
   return prev => ({
     ...prev,
     tools: { ...(prev.tools ?? {}), ...tools }
   })
+}
+
+function addTool<CONTEXT extends JsonLike>(
+  tools: ToolSet<CONTEXT>,
+  name: string | false | undefined,
+  fallback: string,
+  tool: Tool<CONTEXT>
+) {
+  if (name === false) return
+  tools[name ?? fallback] = tool
 }
 
 function readFileTool<CONTEXT extends JsonLike>(root: string): Tool<CONTEXT> {

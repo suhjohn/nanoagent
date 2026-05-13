@@ -1,3 +1,7 @@
+// Origin:
+// - Codex: codex-rs/core/src/tools/handlers/request_user_input_spec.rs
+// - OpenCode: packages/opencode/src/question/index.ts
+// Behavior: blocking user question tool with 1-3 questions and explicit choice options.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (
@@ -12,14 +16,14 @@ type Tool<CONTEXT extends JsonLike> = ToolSet<CONTEXT>[string]
 
 export type QuestionOption = {
   label: string
-  description?: string
+  description: string
 }
 
 export type Question = {
   id: string
   header: string
   question: string
-  options?: QuestionOption[]
+  options: QuestionOption[]
 }
 
 export type QuestionAskParams<CONTEXT> = {
@@ -37,11 +41,11 @@ export type WithQuestionToolParams<CONTEXT extends JsonLike> = {
 export function withQuestionTool<CONTEXT extends JsonLike>(
   params: WithQuestionToolParams<CONTEXT>
 ): AgentPlugin<CONTEXT> {
-  const toolName = params.toolName ?? 'question'
+  const toolName = params.toolName ?? 'request_user_input'
 
   const tool: Tool<CONTEXT> = {
     description:
-      'Ask user one to three short blocking questions. Use only when agent cannot continue from repository, runtime, or session context.',
+      'Request user input for one to three short questions and wait for the response.',
     inputSchema: objectSchema(
       {
         questions: {
@@ -64,16 +68,18 @@ export function withQuestionTool<CONTEXT extends JsonLike>(
               },
               options: {
                 type: 'array',
+                minItems: 2,
+                maxItems: 3,
                 items: objectSchema(
                   {
                     label: { type: 'string' },
                     description: { type: 'string' }
                   },
-                  ['label']
+                  ['label', 'description']
                 )
               }
             },
-            ['id', 'header', 'question']
+            ['id', 'header', 'question', 'options']
           )
         }
       },
@@ -124,13 +130,16 @@ function parseQuestion(raw: unknown): Question {
   }
 }
 
-function parseOptions(raw: unknown): QuestionOption[] | undefined {
-  if (!Array.isArray(raw)) return undefined
+function parseOptions(raw: unknown): QuestionOption[] {
+  if (!Array.isArray(raw)) throw new Error('options must be an array.')
+  if (raw.length < 2 || raw.length > 3) {
+    throw new Error('options must contain two or three choices.')
+  }
   return raw.map(option => {
     const item = assertRecord(option, 'question option')
     return {
       label: stringField(item, 'label'),
-      description: stringField(item, 'description', false)
+      description: stringField(item, 'description')
     }
   })
 }

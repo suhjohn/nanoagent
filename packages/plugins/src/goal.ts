@@ -131,7 +131,9 @@ function buildGoalTools<CONTEXT extends JsonLike>(args: {
   prefix: string
 }): ToolSet<CONTEXT> {
   return {
-    [`${args.prefix}get_goal`]: getGoalTool(args.params) as unknown as Tool<CONTEXT>,
+    [`${args.prefix}get_goal`]: getGoalTool(
+      args.params
+    ) as unknown as Tool<CONTEXT>,
     [`${args.prefix}create_goal`]: createGoalTool({
       params: args.params,
       runtime: args.runtime,
@@ -145,7 +147,9 @@ function buildGoalTools<CONTEXT extends JsonLike>(args: {
   }
 }
 
-function getGoalTool<CONTEXT extends JsonLike>(params: GoalToolsParams<CONTEXT>) {
+function getGoalTool<CONTEXT extends JsonLike>(
+  params: GoalToolsParams<CONTEXT>
+) {
   return {
     description:
       'Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.',
@@ -405,7 +409,8 @@ function applyUsage(params: {
   now: string
 }): Goal {
   const tokensUsed = params.goal.tokensUsed + Math.max(0, params.tokens)
-  const timeUsedSeconds = params.goal.timeUsedSeconds + Math.max(0, params.seconds)
+  const timeUsedSeconds =
+    params.goal.timeUsedSeconds + Math.max(0, params.seconds)
   return {
     ...params.goal,
     status: nextStatusAfterUsage({ goal: params.goal, tokensUsed }),
@@ -461,9 +466,8 @@ async function markGoalTurnStarted<CONTEXT extends JsonLike>(params: {
   params.runtime.startedAt = Date.now()
   params.runtime.modelAccounted = false
   const goal = await params.store.get(params.args.context as CONTEXT)
-  params.runtime.goalId = goal && isAccountableStatus(goal.status)
-    ? goal.goalId
-    : undefined
+  params.runtime.goalId =
+    goal && isAccountableStatus(goal.status) ? goal.goalId : undefined
 }
 
 async function accountModelCompleted<CONTEXT extends JsonLike>(params: {

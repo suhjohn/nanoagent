@@ -1,3 +1,6 @@
+// Origin:
+// - OpenCode: packages/opencode/src/tool/todo.ts, session/todo.ts, tool/todowrite.txt
+// Behavior: todowrite tool replaces ordered session todo state and reports open count.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (

@@ -1,9 +1,11 @@
+// Origin:
+// - Pi: packages/coding-agent/src/core/agent-session.ts queue steering/followUp behavior
+// - Codex: codex-rs/core/src/session/mod.rs queued response items for next turn
+// Behavior: drain queued steering/follow-up messages into subsequent turn input without dropping them.
 import type {
   AgentHookResult,
-  AgentTurnCompletedArgs,
   AgentTurnPreparedArgs,
   AgentTurnPreparedValue,
-  AgentVoidHookResult,
   JsonLike,
   RunAgentOptions
 } from '@nanoagent/kernel'
@@ -41,21 +43,17 @@ export function withTurnQueue<CONTEXT extends JsonLike>(
   const drainSteering = withTurnPrepared<CONTEXT>(async ({ args, value }) => {
     const context = args.context as CONTEXT
     const steering = (await params.store.steering(context)).slice(0, take)
-    if (!steering.length) return { value }
-    await params.store.shiftSteering(context, steering.length)
-    const messages = steering.map(text => userMessage(text))
+    const followUp = (await params.store.followUp(context)).slice(0, take)
+    const messages = [...steering, ...followUp].map(text => userMessage(text))
+    if (!messages.length) return { value }
+    if (steering.length)
+      await params.store.shiftSteering(context, steering.length)
+    if (followUp.length)
+      await params.store.shiftFollowUp(context, followUp.length)
     return { value: appendMessages(value, messages) }
   })
 
-  const drainFollowUp = withTurnCompleted<CONTEXT>(async args => {
-    const context = args.context as CONTEXT
-    const followUp = (await params.store.followUp(context)).slice(0, take)
-    if (followUp.length) {
-      await params.store.shiftFollowUp(context, followUp.length)
-    }
-  })
-
-  return options => drainFollowUp(drainSteering(options))
+  return options => drainSteering(options)
 }
 
 function userMessage(content: string): Message {
@@ -99,25 +97,6 @@ function withTurnPrepared<CONTEXT extends JsonLike>(
           value: next?.value ?? value,
           control: next?.control
         }
-      }
-    }
-  })
-}
-
-function withTurnCompleted<CONTEXT extends JsonLike>(
-  effect: (args: AgentTurnCompletedArgs<CONTEXT>) => Awaitable<void>
-): AgentPlugin<CONTEXT> {
-  return options => ({
-    ...options,
-    hooks: {
-      ...options.hooks,
-      onTurnCompleted: async args => {
-        const previous = (await options.hooks.onTurnCompleted?.(
-          args
-        )) as AgentVoidHookResult<CONTEXT>
-        if (previous?.control) return previous
-        await effect(args)
-        return previous
       }
     }
   })

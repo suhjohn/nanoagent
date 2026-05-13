@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/session/retry.ts, session/processor.ts
+// - Pi: packages/coding-agent/src/core/model-registry.ts, model-resolver.ts
+// Behavior: model provider composition, retry, fallback routing, and result mapping middleware.
 import type {
   AgentCallModelArgs,
   AgentCallModelResult,

@@ -1,168 +1,74 @@
-// @ts-nocheck
-const composePlugins = (...plugins) => options => plugins.reduce((nextOptions, plugin) => plugin(nextOptions), options);
-const defineTool = spec => spec;
-const withTool = (name, tool) => options => ({
-    ...options,
-    tools: { ...(options.tools ?? {}), [name]: tool }
-});
-const withTools = tools => options => ({
-    ...options,
-    tools: { ...(options.tools ?? {}), ...tools }
-});
-const appendCallModelMiddleware = middleware => options => ({
-    ...options,
-    middleware: {
-        ...(options.middleware ?? {}),
-        callModel: [...(options.middleware?.callModel ?? []), middleware]
-    }
-});
-const appendCallToolMiddleware = middleware => options => ({
-    ...options,
-    middleware: {
-        ...(options.middleware ?? {}),
-        callTool: [...(options.middleware?.callTool ?? []), middleware]
-    }
-});
-const withTurnPrepared = transform => options => ({
-    ...options,
-    hooks: {
-        ...options.hooks,
-        onTurnPrepared: async (args) => {
-            const previous = await options.hooks.onTurnPrepared(args);
-            if (previous?.control)
-                return previous;
-            const value = previous?.value;
-            if (!value)
-                return previous;
-            const next = await transform({ args, value });
-            return {
-                context: next?.context ?? previous?.context,
-                value: next?.value ?? value,
-                control: next?.control
-            };
-        }
-    }
-});
-const withTurnCompleted = effect => options => ({
-    ...options,
-    hooks: {
-        ...options.hooks,
-        onTurnCompleted: async (args) => {
-            const previous = await options.hooks.onTurnCompleted?.(args);
-            if (previous?.control)
-                return previous;
-            const next = await effect(args);
-            return {
-                context: next?.context ?? previous?.context,
-                control: previous?.control
-            };
-        }
-    }
-});
-const withSaveState = effect => options => ({
-    ...options,
-    saveState: async (args) => {
-        await options.saveState?.(args);
-        await effect(args);
-    }
-});
-const objectSchema = (properties, required = []) => ({
-    type: 'object',
-    properties,
-    required,
-    additionalProperties: false
-});
-const assertRecord = (input, name) => {
-    if (!input || typeof input !== 'object' || Array.isArray(input))
-        throw new Error(`${name} input must be an object.`);
-    return input;
-};
-const stringField = (input, key, required = true) => {
-    const value = input[key];
-    if (typeof value === 'string')
-        return value;
-    if (!required && value === undefined)
-        return undefined;
-    throw new Error(`${key} must be a string.`);
-};
-const booleanField = (input, key, fallback) => {
-    const value = input[key];
-    if (value === undefined)
-        return fallback;
-    if (typeof value === 'boolean')
-        return value;
-    throw new Error(`${key} must be a boolean.`);
-};
-const numberField = (input, key, fallback) => {
-    const value = input[key];
-    if (value === undefined)
-        return fallback;
-    if (typeof value === 'number' && Number.isFinite(value))
-        return value;
-    throw new Error(`${key} must be a number.`);
-};
-const stringArrayField = (input, key, fallback = []) => {
-    const value = input[key];
-    if (value === undefined)
-        return fallback;
-    if (Array.isArray(value) && value.every(item => typeof item === 'string'))
-        return value;
-    throw new Error(`${key} must be a string array.`);
-};
-const message = (role, content) => ({ role, content });
-const prependMessages = (value, messages) => ({
-    ...value,
-    messages: [...messages, ...(value.messages ?? [])]
-});
-const appendMessages = (value, messages) => ({
-    ...value,
-    messages: [...(value.messages ?? []), ...messages]
-});
+const TODO_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled']
+const TODO_PRIORITIES = ['high', 'medium', 'low']
 export function withTodoWriteTool(params) {
-    const toolName = params.toolName ?? 'todowrite';
-    return withTool(toolName, defineTool({
-        description: 'Replace current session todo list with complete ordered task state. Status must be pending, in_progress, completed, or cancelled.',
-        inputSchema: objectSchema({
-            todos: {
-                type: 'array',
-                items: objectSchema({
-                    content: { type: 'string' },
-                    status: {
-                        type: 'string',
-                        enum: ['pending', 'in_progress', 'completed', 'cancelled']
-                    },
-                    priority: { type: 'string', enum: ['high', 'medium', 'low'] }
-                }, ['content', 'status', 'priority'])
-            }
-        }, ['todos']),
-        execute: async (input, options) => {
-            const todos = parseTodos(input);
-            await params.update({ todos, context: options.experimental_context });
-            return {
-                title: `${todos.filter(todo => todo.status !== 'completed').length} todos`,
-                todos
-            };
+  const toolName = params.toolName ?? 'todowrite'
+  const tool = {
+    description:
+      'Replace current session todo list with complete ordered task state. Status must be pending, in_progress, completed, or cancelled.',
+    inputSchema: objectSchema(
+      {
+        todos: {
+          type: 'array',
+          items: objectSchema(
+            {
+              content: { type: 'string' },
+              status: { type: 'string', enum: TODO_STATUSES },
+              priority: { type: 'string', enum: TODO_PRIORITIES }
+            },
+            ['content', 'status', 'priority']
+          )
         }
-    }));
+      },
+      ['todos']
+    ),
+    execute: async (input, options) => {
+      const todos = parseTodos(input)
+      await params.update({ todos, context: options.experimental_context })
+      const open = todos.filter(todo => todo.status !== 'completed').length
+      return { title: `${open} todos`, todos }
+    }
+  }
+  return options => ({
+    ...options,
+    tools: { ...(options.tools ?? {}), [toolName]: tool }
+  })
 }
 function parseTodos(input) {
-    const record = assertRecord(input, 'todowrite');
-    if (!Array.isArray(record.todos))
-        throw new Error('todos must be an array.');
-    return record.todos.map(item => {
-        const record = assertRecord(item, 'todo');
-        const status = stringField(record, 'status');
-        const priority = stringField(record, 'priority');
-        if (!['pending', 'in_progress', 'completed', 'cancelled'].includes(status)) {
-            throw new Error(`Invalid todo status "${status}".`);
-        }
-        if (!['high', 'medium', 'low'].includes(priority)) {
-            throw new Error(`Invalid todo priority "${priority}".`);
-        }
-        return {
-            content: stringField(record, 'content'),
-            status: status,
-            priority: priority
-        };
-    });
+  const record = assertRecord(input, 'todowrite')
+  if (!Array.isArray(record.todos)) {
+    throw new Error('todos must be an array.')
+  }
+  return record.todos.map(parseTodo)
+}
+function parseTodo(raw) {
+  const item = assertRecord(raw, 'todo')
+  const status = stringField(item, 'status')
+  const priority = stringField(item, 'priority')
+  if (!isTodoStatus(status)) {
+    throw new Error(`Invalid todo status "${status}".`)
+  }
+  if (!isTodoPriority(priority)) {
+    throw new Error(`Invalid todo priority "${priority}".`)
+  }
+  return { content: stringField(item, 'content'), status, priority }
+}
+function isTodoStatus(value) {
+  return TODO_STATUSES.includes(value)
+}
+function isTodoPriority(value) {
+  return TODO_PRIORITIES.includes(value)
+}
+function objectSchema(properties, required = []) {
+  return { type: 'object', properties, required, additionalProperties: false }
+}
+function assertRecord(input, name) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error(`${name} input must be an object.`)
+  }
+  return input
+}
+function stringField(input, key) {
+  const value = input[key]
+  if (typeof value === 'string') return value
+  throw new Error(`${key} must be a string.`)
 }

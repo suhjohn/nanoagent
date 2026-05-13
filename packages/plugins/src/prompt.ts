@@ -1,3 +1,7 @@
+// Origin:
+// - Codex: codex-rs/core/src/prompt_for_compact_command.md, project/user instructions assembly
+// - Pi: packages/coding-agent/src/core/system-prompt.ts, resource-loader.ts
+// Behavior: prompt middleware for system text, memory, skills, slash expansion, and compaction replacement.
 import type {
   AgentHookResult,
   AgentTurnPreparedArgs,

@@ -1,28 +1,31 @@
-import { withFilesystemTools } from './filesystem.js';
-import { withShellTool } from './shell.js';
-import { withApplyPatchTool } from './patch.js';
+import { withFilesystemTools } from './filesystem.js'
+import { withShellTool } from './shell.js'
+import { withApplyPatchTool } from './patch.js'
+const DEFAULT_TOOLS = ['read', 'write', 'grep', 'shell']
+const FILESYSTEM_TOOLS = ['read', 'write', 'list', 'grep']
 export function withCodingTools(params) {
-    const enabled = new Set(params.enabled ?? ['read', 'write', 'grep', 'shell']);
-    const plugins = [
-        enabled.has('read') ||
-            enabled.has('write') ||
-            enabled.has('list') ||
-            enabled.has('grep')
-            ? withFilesystemTools({
-                root: params.cwd,
-                readToolName: enabled.has('read') ? 'read' : '__disabled_read',
-                writeToolName: enabled.has('write') ? 'write' : '__disabled_write',
-                editToolName: enabled.has('write') ? 'edit' : '__disabled_edit',
-                listToolName: enabled.has('list') ? 'ls' : '__disabled_ls',
-                grepToolName: enabled.has('grep') ? 'grep' : '__disabled_grep'
-            })
-            : (options) => options,
-        enabled.has('shell')
-            ? withShellTool({ cwd: params.cwd, toolName: 'bash' })
-            : (options) => options,
-        enabled.has('patch')
-            ? withApplyPatchTool({ root: params.cwd })
-            : (options) => options
-    ];
-    return options => plugins.reduce((next, plugin) => plugin(next), options);
+  const enabled = new Set(params.enabled ?? DEFAULT_TOOLS)
+  const plugins = []
+  if (FILESYSTEM_TOOLS.some(tool => enabled.has(tool))) {
+    plugins.push(
+      withFilesystemTools({
+        root: params.cwd,
+        readToolName: nameOrDisabled(enabled, 'read', 'read'),
+        writeToolName: nameOrDisabled(enabled, 'write', 'write'),
+        editToolName: nameOrDisabled(enabled, 'write', 'edit'),
+        listToolName: nameOrDisabled(enabled, 'list', 'ls'),
+        grepToolName: nameOrDisabled(enabled, 'grep', 'grep')
+      })
+    )
+  }
+  if (enabled.has('shell')) {
+    plugins.push(withShellTool({ cwd: params.cwd, toolName: 'bash' }))
+  }
+  if (enabled.has('patch')) {
+    plugins.push(withApplyPatchTool({ root: params.cwd }))
+  }
+  return options => plugins.reduce((next, plugin) => plugin(next), options)
+}
+function nameOrDisabled(enabled, flag, name) {
+  return enabled.has(flag) ? name : false
 }

@@ -112,9 +112,7 @@ export function withOpenCodeCompaction<CONTEXT extends JsonLike>(params: {
       selected.head,
       OPENCODE_TOOL_OUTPUT_MAX_CHARS
     )
-    const extraContext = params.context
-      ? await params.context({ context })
-      : []
+    const extraContext = params.context ? await params.context({ context }) : []
     const summary = (
       await params.summarize({
         context,
@@ -470,8 +468,7 @@ function collectPaths(
   const toolName = firstStringField(record, TOOL_NAME_KEYS)
   const nextInsideTool = insideTool || !!(toolName && toolNames.has(toolName))
   if (nextInsideTool) {
-    const directPath =
-      stringValue(record.path) ?? stringValue(record.filePath)
+    const directPath = stringValue(record.path) ?? stringValue(record.filePath)
     if (directPath) paths.add(directPath)
   }
   for (const child of Object.values(record)) {

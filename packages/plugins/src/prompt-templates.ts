@@ -1,9 +1,40 @@
-// @ts-nocheck
+// Origin:
+// - Pi: packages/coding-agent/src/core/prompt-template.ts, slash-commands.ts
+// Behavior: load markdown prompt templates and expand slash-command arguments into user prompts.
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type {
+  AgentHookResult,
+  AgentTurnPreparedValue,
+  JsonLike,
+  RunAgentOptions
+} from '@nanoagent/kernel'
 
-export async function loadPromptTemplates(dirs) {
-  const templates = []
+type AgentPlugin<CONTEXT extends JsonLike> = (
+  options: RunAgentOptions<CONTEXT>
+) => RunAgentOptions<CONTEXT>
+
+export type PromptTemplate = {
+  name: string
+  description?: string
+  content: string
+  filePath: string
+}
+
+export type PromptCommand = {
+  name: string
+  args: string[]
+}
+
+export type PromptTemplatesParams<CONTEXT extends JsonLike> = {
+  dirs: readonly string[]
+  getInput: (context: CONTEXT) => string | undefined
+}
+
+export async function loadPromptTemplates(
+  dirs: readonly string[]
+): Promise<PromptTemplate[]> {
+  const templates: PromptTemplate[] = []
   for (const dir of dirs) {
     const info = await stat(dir).catch(() => undefined)
     if (!info?.isDirectory()) continue
@@ -26,7 +57,10 @@ export async function loadPromptTemplates(dirs) {
   return templates
 }
 
-export function expandPromptTemplate(template, args) {
+export function expandPromptTemplate(
+  template: string,
+  args: readonly string[]
+) {
   return template
     .replace(/\$\{@:([0-9]+):([0-9]+)\}/g, (_match, start, count) =>
       args.slice(Number(start) - 1, Number(start) - 1 + Number(count)).join(' ')
@@ -42,19 +76,25 @@ export function expandPromptTemplate(template, args) {
     )
 }
 
-export function withPromptTemplates(params) {
-  let cached
+export function withPromptTemplates<CONTEXT extends JsonLike>(
+  params: PromptTemplatesParams<CONTEXT>
+): AgentPlugin<CONTEXT> {
+  let cached: Promise<PromptTemplate[]> | undefined
   return options => ({
     ...options,
     hooks: {
       ...options.hooks,
       onTurnPrepared: async args => {
-        const previous = await options.hooks.onTurnPrepared(args)
+        const previous = (await options.hooks.onTurnPrepared(
+          args
+        )) as AgentHookResult<AgentTurnPreparedValue, CONTEXT>
         if (previous?.control) return previous
         const value = previous?.value
         if (!value) return previous
 
-        const command = parseSlashCommand(params.getInput(args.context))
+        const command = parseSlashCommand(
+          params.getInput(args.context as CONTEXT)
+        )
         if (!command) return previous
 
         cached ??= loadPromptTemplates(params.dirs)
@@ -64,37 +104,46 @@ export function withPromptTemplates(params) {
         const expanded = expandPromptTemplate(template.content, command.args)
         return {
           context: previous?.context,
-          value: {
-            ...value,
-            messages: [
-              ...(value.messages ?? []),
-              { role: 'user', content: expanded }
-            ]
-          }
+          value: appendMessage(value, { role: 'user', content: expanded })
         }
       }
     }
   })
 }
 
-function parseSlashCommand(input) {
+function appendMessage(
+  value: AgentTurnPreparedValue,
+  message: { role: 'user'; content: string }
+): AgentTurnPreparedValue {
+  return {
+    ...value,
+    messages: [...(value.messages ?? []), message]
+  } as AgentTurnPreparedValue
+}
+
+export function parseSlashCommand(
+  input: string | undefined
+): PromptCommand | undefined {
   if (typeof input !== 'string' || !input.startsWith('/')) return undefined
   const [name, ...args] = parseArgs(input.slice(1))
   if (!name) return undefined
   return { name, args }
 }
 
-function parseArgs(input) {
+function parseArgs(input: string): string[] {
   return [...input.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
     match => match[1] ?? match[2] ?? match[3] ?? ''
   )
 }
 
-function frontmatterBlock(raw) {
+function frontmatterBlock(raw: string): {
+  frontmatter: Record<string, string>
+  body: string
+} {
   if (!raw.startsWith('---\n')) return { frontmatter: {}, body: raw }
   const end = raw.indexOf('\n---\n', 4)
   if (end < 0) return { frontmatter: {}, body: raw }
-  const frontmatter = {}
+  const frontmatter: Record<string, string> = {}
   for (const line of raw.slice(4, end).split('\n')) {
     const split = line.indexOf(':')
     if (split > 0)

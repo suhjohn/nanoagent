@@ -1,3 +1,6 @@
+// Origin:
+// - Codex: codex-rs/core/src/tools/handlers/plan_spec.rs, plan.rs
+// Behavior: update_plan checklist tool, with at most one in_progress item.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (
@@ -41,11 +44,11 @@ const PLAN_STATUSES: readonly PlanStatus[] = [
 export function withPlanTool<CONTEXT extends JsonLike>(
   params: WithPlanToolParams<CONTEXT>
 ): AgentPlugin<CONTEXT> {
-  const toolName = params.toolName ?? 'plan'
+  const toolName = params.toolName ?? 'update_plan'
 
   const tool: Tool<CONTEXT> = {
     description:
-      'Publish current task checklist. Keep at most one item in_progress and update status as work completes.',
+      'Updates the task plan. Provide optional explanation and plan items. At most one step can be in_progress.',
     inputSchema: objectSchema(
       {
         explanation: { type: 'string' },

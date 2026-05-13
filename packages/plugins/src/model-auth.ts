@@ -1,3 +1,7 @@
+// Origin:
+// - Pi: packages/coding-agent/src/core/auth-storage.ts, model-registry.ts
+// - OpenCode: packages/opencode/src/provider/auth.ts, provider/provider.ts
+// Behavior: resolve API/OAuth credentials before model calls and let host apply provider-specific auth.
 import type {
   AgentModelProviders,
   JsonLike,
@@ -15,10 +19,28 @@ export type ModelAuthStore = {
   oauthToken?(provider: string): Awaitable<string | undefined>
 }
 
-type ApplyAuth = (args: {
-  provider: string
-  token: string
-}) => Awaitable<void>
+type ApplyAuth = (args: { provider: string; token: string }) => Awaitable<void>
+
+export function createEnvModelAuthStore(
+  env: Record<string, string | undefined> = process.env
+): ModelAuthStore {
+  return {
+    apiKey: provider => firstEnv(env, authEnvNames(provider, 'API_KEY')),
+    oauthToken: provider => firstEnv(env, authEnvNames(provider, 'OAUTH_TOKEN'))
+  }
+}
+
+export function createMemoryModelAuthStore(params: {
+  apiKeys?: Record<string, string>
+  oauthTokens?: Record<string, string>
+}): ModelAuthStore {
+  const apiKeys = normalizeTokenRecord(params.apiKeys)
+  const oauthTokens = normalizeTokenRecord(params.oauthTokens)
+  return {
+    apiKey: provider => apiKeys[normalizeProvider(provider)],
+    oauthToken: provider => oauthTokens[normalizeProvider(provider)]
+  }
+}
 
 export function withModelAuth<CONTEXT extends JsonLike>(params: {
   providers?: AgentModelProviders
@@ -57,7 +79,7 @@ function mergeProviders<CONTEXT extends JsonLike>(
 }
 
 function providerFromModel(model: string): string {
-  return model.split('/')[0] ?? model
+  return normalizeProvider(model.split('/')[0] ?? model)
 }
 
 async function resolveToken(
@@ -67,4 +89,33 @@ async function resolveToken(
   const apiKey = await auth.apiKey(provider)
   if (apiKey) return apiKey
   return auth.oauthToken?.(provider)
+}
+
+function normalizeProvider(provider: string) {
+  return provider.trim().toLowerCase()
+}
+
+function authEnvNames(provider: string, suffix: string) {
+  const normalized = normalizeProvider(provider)
+  const upper = normalized.replace(/[^a-z0-9]+/g, '_').toUpperCase()
+  return [`${upper}_${suffix}`, `NANO_${upper}_${suffix}`]
+}
+
+function firstEnv(
+  env: Record<string, string | undefined>,
+  names: readonly string[]
+) {
+  for (const name of names) {
+    const value = env[name]
+    if (value) return value
+  }
+  return undefined
+}
+
+function normalizeTokenRecord(input: Record<string, string> | undefined) {
+  const output: Record<string, string> = {}
+  for (const [provider, token] of Object.entries(input ?? {})) {
+    output[normalizeProvider(provider)] = token
+  }
+  return output
 }

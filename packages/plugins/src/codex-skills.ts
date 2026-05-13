@@ -502,7 +502,10 @@ function resolvePath(params: { cwd: string; path: string }) {
   return path.resolve(params.cwd, params.path)
 }
 
-function frontmatterBlock(raw: string): { frontmatter: Frontmatter; body: string } {
+function frontmatterBlock(raw: string): {
+  frontmatter: Frontmatter
+  body: string
+} {
   if (!raw.startsWith('---\n')) return { frontmatter: {}, body: raw }
   const end = raw.indexOf('\n---\n', 4)
   if (end < 0) return { frontmatter: {}, body: raw }
@@ -560,7 +563,8 @@ function scalarValue(raw: string) {
   const value = raw.trim()
   if (value === 'true') return true
   if (value === 'false') return false
-  if (value.startsWith('[') && value.endsWith(']')) return parseInlineList(value)
+  if (value.startsWith('[') && value.endsWith(']'))
+    return parseInlineList(value)
   return unquote(value)
 }
 

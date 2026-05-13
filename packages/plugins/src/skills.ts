@@ -1,3 +1,7 @@
+// Origin:
+// - Pi: packages/coding-agent/src/core/resource-loader.ts skills support
+// - OpenCode: packages/opencode/src/skill/index.ts
+// Behavior: discover generic SKILL.md files and inject selected skill bodies into system prompt.
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type {

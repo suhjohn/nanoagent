@@ -549,7 +549,11 @@ function applyReplacements(
   const nextLines = [...originalLines]
   const reversed = [...replacements].sort((a, b) => b.start - a.start)
   for (const replacement of reversed) {
-    nextLines.splice(replacement.start, replacement.oldLength, ...replacement.lines)
+    nextLines.splice(
+      replacement.start,
+      replacement.oldLength,
+      ...replacement.lines
+    )
   }
   if (nextLines.at(-1) !== '') nextLines.push('')
   return nextLines.join('\n')
@@ -575,7 +579,8 @@ const LINE_MATCHERS: readonly LineMatcher[] = [
   (left, right) => left === right,
   (left, right) => left.trimEnd() === right.trimEnd(),
   (left, right) => left.trim() === right.trim(),
-  (left, right) => normalizeUnicode(left.trim()) === normalizeUnicode(right.trim())
+  (left, right) =>
+    normalizeUnicode(left.trim()) === normalizeUnicode(right.trim())
 ]
 
 function findSequence(params: {

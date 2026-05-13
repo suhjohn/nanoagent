@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/tool/task.ts, agent/agent.ts
+// - Codex: codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+// Behavior: delegate bounded work to caller-owned subagent runner and wrap result in task_result block.
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
 
 type AgentPlugin<CONTEXT extends JsonLike> = (
@@ -107,10 +111,7 @@ function objectSchema(
   }
 }
 
-function assertRecord(
-  input: unknown,
-  name: string
-): Record<string, unknown> {
+function assertRecord(input: unknown, name: string): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error(`${name} input must be an object.`)
   }

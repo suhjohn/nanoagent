@@ -1,3 +1,7 @@
+// Origin:
+// - Codex: codex-rs/core/src/tools/sandboxing.rs, tools/runtimes/shell.rs
+// - OpenCode: packages/opencode/src/permission/index.ts
+// Behavior: resolve per-tool sandbox policy and optionally retry failed calls outside sandbox.
 import type {
   AgentCallToolArgs,
   AgentToolCallResponse,

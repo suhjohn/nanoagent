@@ -1,3 +1,7 @@
+// Origin:
+// - OpenCode: packages/opencode/src/tool/edit.ts file locks
+// - Codex: codex-rs/core/src/tools/orchestrator.rs serialized tool execution
+// Behavior: serialize mutating file tools by realpath/root key.
 import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import type { JsonLike, RunAgentOptions } from '@nanoagent/kernel'
@@ -44,7 +48,10 @@ export function withFileMutationQueue<CONTEXT extends JsonLike>(params?: {
   })
 }
 
-async function runSerialized<A>(key: string, task: () => Promise<A>): Promise<A> {
+async function runSerialized<A>(
+  key: string,
+  task: () => Promise<A>
+): Promise<A> {
   const previous = queues.get(key) ?? Promise.resolve()
   let release = () => {}
   const current = previous.then(

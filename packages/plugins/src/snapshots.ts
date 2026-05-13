@@ -1,3 +1,6 @@
+// Origin:
+// - OpenCode: packages/opencode/src/snapshot/index.ts
+// Behavior: capture pre-tool snapshots, restore on tool errors, and attach diffs to successful outputs.
 import type {
   AgentCallToolArgs,
   AgentToolCallResponse,
@@ -46,11 +49,14 @@ export function withSnapshots<CONTEXT extends JsonLike, SNAPSHOT>(
     }
 
     if (!snapshotter.diff) return response
-    return attachDiff(response, await snapshotter.diff({
-      ...site,
-      snapshot,
-      output: response.output
-    }))
+    return attachDiff(
+      response,
+      await snapshotter.diff({
+        ...site,
+        snapshot,
+        output: response.output
+      })
+    )
   })
 }
 
