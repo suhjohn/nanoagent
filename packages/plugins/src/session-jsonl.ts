@@ -263,7 +263,6 @@ function withTurnCompleted<CONTEXT extends JsonLike>(
         const previous = (await options.hooks.onTurnCompleted?.(
           args
         )) as AgentVoidHookResult<CONTEXT>
-        if (previous?.control) return previous
         await effect(args)
         return previous
       }

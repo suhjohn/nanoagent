@@ -22,6 +22,7 @@ import {
   type LanguageModelResponseMetadata,
   type LanguageModelUsage,
   type ModelMessage,
+  jsonSchema,
   streamText,
   type TextStreamPart,
   type ToolSet
@@ -814,9 +815,22 @@ function toModelTools(tools: ToolSet): ToolSet {
   return Object.fromEntries(
     Object.entries(tools).map(([toolName, toolConfig]) => {
       const { execute: _execute, ...definition } = toolConfig
+      if (isRawJsonSchema(definition.inputSchema)) {
+        definition.inputSchema = jsonSchema(definition.inputSchema)
+      }
       return [toolName, definition]
     })
   ) as ToolSet
+}
+
+function isRawJsonSchema(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    'type' in value &&
+    !('validate' in value)
+  )
 }
 
 function resolveModel({
