@@ -1,0 +1,24 @@
+{
+  "name": "example-session-plugin-cli",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "../../packages/kernel/node_modules/.bin/tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.53",
+    "@nanoagent/kernel": "file:../../packages/kernel",
+    "@nanoagent/plugin": "file:../../packages/plugin",
+    "ai": "^6.0.168",
+    "bun-types": "^1.3.13",
+    "effect": "^3.21.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

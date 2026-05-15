@@ -1,6 +1,6 @@
 # `runAgent` Plugin Spec
 
-`runAgent` stays execution kernel. `@nanoagent/compose` provides plugin composition.
+`runAgent` stays execution kernel. `@nanoagent/plugin` provides plugin composition.
 
 Current kernel already exposes right seams in `packages/kernel/src/index.ts`: `state`, `tools`, `modelProviders`, `hooks`, `middleware`, `saveState`, and `signal`. Plugin layer should resolve product behavior into those inputs, then consume `AgentStreamEvent` output.
 
@@ -10,7 +10,7 @@ Code above kernel owns product concerns: sessions, persistence, history, prompt 
 
 ## Library Surface
 
-`@nanoagent/kernel` executes. `@nanoagent/compose` combines options.
+`@nanoagent/kernel` executes. `@nanoagent/plugin` combines options.
 
 Compose intentionally has one real abstraction: option transform.
 
