@@ -1,33 +1,42 @@
 # Idempotent Tool Replay
 
-Resume an agent run that crashed mid-tool-call, without re-running the side effect.
+**Lose network response after payment. Resume without double-charging.**
 
-## The problem
+## What this showcases
 
-Kernel saves run state after each phase. If a process dies between starting a tool call and committing its result, saved state contains an `inFlight` tool call. Kernel refuses to auto-resume that state: the external side effect (charge, email, write) may have already happened, and re-running would double it.
+When a network response disappears between starting a tool call and committing its result, the saved state holds an `inFlight` tool call. Kernel refuses to auto-resume: the external side effect — a charge, an email, a write — might already have happened. Replaying blindly could double it.
+
+Some tools fix this at the API: pass an idempotency key, and replay returns the original result instead of running again. This example shows how to opt in to safe replay, per tool.
+
+## Kernel boundary
+
+Kernel records exact tool progress. If a saved run still has `currentTurn.toolCalls.inFlight`, kernel does not decide whether the side effect happened. Resuming that state unchanged throws `Cannot safely resume while tool calls are in flight.`
+
+Caller owns recovery policy before calling `runAgent` again:
+
+- Leave state unchanged when tool outcome is unknown. Kernel stops.
+- Move replay-safe calls from `inFlight` to `pending`. Kernel executes them again with same `toolCallId`.
+
+This example chooses replay only for `ChargeCard`, because the payment gateway treats `toolCallId` as the idempotency key.
 
 ## The pattern
 
-Some tools are externally idempotent: replaying them with the same key returns the original result instead of running again. Caller code can opt in to replay for those tools.
-
-`ChargeCard` in this example passes Kernel's `toolCallId` as the payment gateway's `idempotencyKey`. Same key always returns the same charge, so replay is safe end-to-end.
+`ChargeCard` passes the kernel's `toolCallId` as the payment gateway's `idempotencyKey`. Same key, same charge. Replay is safe end-to-end.
 
 Before resume, `replayIdempotentChargeCalls` inspects saved state:
 
-- Every in-flight call is `ChargeCard`: rewrite calls from `inFlight` back to `pending` and set phase to `tool_call_started`. Kernel re-executes the call; gateway returns the original charge.
-- Any in-flight call lacks replay guarantee: leave state unchanged. Kernel throws `Cannot safely resume while tool calls are in flight.`
+- Every in-flight call is `ChargeCard`: rewrite calls from `inFlight` back to `pending`, set phase to `tool_call_started`. Kernel re-executes; the gateway returns the original charge.
+- Any in-flight call lacks the replay guarantee: leave state unchanged. Kernel throws `Cannot safely resume while tool calls are in flight.`
+
+## Try it
+
+```sh
+bun run start "Charge $1.00"
+```
 
 ## Source
 
 See [src/index.ts](./src/index.ts).
-
-## Run
-
-```sh
-bun run start "Resume the idempotent charge and summarize the result."
-```
-
-The CLI seeds an interrupted in-flight `ChargeCard` call, replays it with same idempotency key, then resumes the model with real providers from `packages/kernel/.env`.
 
 ## Check
 

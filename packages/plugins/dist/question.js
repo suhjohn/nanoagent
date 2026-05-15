@@ -1,74 +1,108 @@
 export function withQuestionTool(params) {
     const toolName = params.toolName ?? 'request_user_input';
+    const turnIds = new Map();
     const tool = {
-        description: 'Request user input for one to three short questions and wait for the response.',
+        description: requestUserInputDescription(params.availableModes ?? ['Plan']),
         inputSchema: objectSchema({
             questions: {
                 type: 'array',
-                minItems: 1,
-                maxItems: 3,
+                description: 'Questions to show the user. Prefer 1 and do not exceed 3',
                 items: objectSchema({
                     id: {
                         type: 'string',
-                        description: 'Stable snake_case key used in answer map.'
+                        description: 'Stable identifier for mapping answers (snake_case).'
                     },
                     header: {
                         type: 'string',
-                        description: 'Short UI label.'
+                        description: 'Short header label shown in the UI (12 or fewer chars).'
                     },
                     question: {
                         type: 'string',
-                        description: 'Single concrete question.'
+                        description: 'Single-sentence prompt shown to the user.'
                     },
                     options: {
                         type: 'array',
-                        minItems: 2,
-                        maxItems: 3,
+                        description: 'Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option in this list; the client will add a free-form "Other" option automatically.',
                         items: objectSchema({
-                            label: { type: 'string' },
-                            description: { type: 'string' }
+                            label: {
+                                type: 'string',
+                                description: 'User-facing label (1-5 words).'
+                            },
+                            description: {
+                                type: 'string',
+                                description: 'One short sentence explaining impact/tradeoff if selected.'
+                            }
                         }, ['label', 'description'])
                     }
                 }, ['id', 'header', 'question', 'options'])
             }
         }, ['questions']),
-        execute: (input, options) => params.ask({
-            input: parseQuestionInput(input),
-            context: options.experimental_context,
-            signal: options.abortSignal,
-            toolCallId: options.toolCallId
-        })
+        execute: async (input, options) => {
+            const context = options.experimental_context;
+            if (params.isRootThread?.({ context }) === false) {
+                throw new Error('request_user_input can only be used by the root thread');
+            }
+            const availableModes = params.availableModes ?? ['Plan'];
+            const mode = params.mode?.({ context });
+            if (mode !== undefined && !availableModes.includes(mode)) {
+                throw new Error(`request_user_input is unavailable in ${mode} mode`);
+            }
+            const turnId = turnIds.get(options.toolCallId) ?? options.toolCallId;
+            const response = await params.ask({
+                input: parseQuestionInput(input),
+                context,
+                signal: options.abortSignal,
+                toolCallId: options.toolCallId,
+                turnId
+            });
+            if (!response) {
+                throw new Error('request_user_input was cancelled before receiving a response');
+            }
+            return response;
+        }
     };
     return options => ({
         ...options,
-        tools: { ...(options.tools ?? {}), [toolName]: tool }
+        tools: { ...(options.tools ?? {}), [toolName]: tool },
+        hooks: {
+            ...options.hooks,
+            onToolCallStarted: args => {
+                if (args.toolName === toolName) {
+                    turnIds.set(args.toolCallId, args.turn.turnId);
+                }
+                return options.hooks.onToolCallStarted?.(args);
+            },
+            onToolCallCompleted: args => {
+                if (args.toolName === toolName) {
+                    turnIds.delete(args.toolCallId);
+                }
+                return options.hooks.onToolCallCompleted?.(args);
+            }
+        }
     });
 }
 function parseQuestionInput(input) {
     const record = assertRecord(input, 'question');
     const rawQuestions = record.questions;
-    if (!Array.isArray(rawQuestions) || rawQuestions.length < 1) {
-        throw new Error('questions must contain at least one question.');
-    }
-    if (rawQuestions.length > 3) {
-        throw new Error('questions must contain at most three questions.');
-    }
+    if (!Array.isArray(rawQuestions))
+        throw new Error('questions must be an array.');
     return { questions: rawQuestions.map(parseQuestion) };
 }
 function parseQuestion(raw) {
     const question = assertRecord(raw, 'question item');
+    const options = parseOptions(question.options);
     return {
         id: stringField(question, 'id'),
         header: stringField(question, 'header'),
         question: stringField(question, 'question'),
-        options: parseOptions(question.options)
+        isOther: true,
+        isSecret: booleanField(question, 'isSecret', false),
+        options
     };
 }
 function parseOptions(raw) {
-    if (!Array.isArray(raw))
-        throw new Error('options must be an array.');
-    if (raw.length < 2 || raw.length > 3) {
-        throw new Error('options must contain two or three choices.');
+    if (!Array.isArray(raw) || raw.length === 0) {
+        throw new Error('request_user_input requires non-empty options for every question');
     }
     return raw.map(option => {
         const item = assertRecord(option, 'question option');
@@ -77,6 +111,19 @@ function parseOptions(raw) {
             description: stringField(item, 'description')
         };
     });
+}
+function requestUserInputDescription(availableModes) {
+    return `Request user input for one to three short questions and wait for the response. This tool is only available in ${formatAllowedModes(availableModes)}.`;
+}
+function formatAllowedModes(availableModes) {
+    if (availableModes.length === 0)
+        return 'no modes';
+    if (availableModes.length === 1)
+        return `${availableModes[0]} mode`;
+    if (availableModes.length === 2) {
+        return `${availableModes[0]} or ${availableModes[1]} mode`;
+    }
+    return `modes: ${availableModes.join(',')}`;
 }
 function objectSchema(properties, required = []) {
     return { type: 'object', properties, required, additionalProperties: false };
@@ -94,4 +141,12 @@ function stringField(input, key, required = true) {
     if (!required && value === undefined)
         return undefined;
     throw new Error(`${key} must be a string.`);
+}
+function booleanField(input, key, fallback) {
+    const value = input[key];
+    if (value === undefined)
+        return fallback;
+    if (typeof value === 'boolean')
+        return value;
+    throw new Error(`${key} must be a boolean.`);
 }

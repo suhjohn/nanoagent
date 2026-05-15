@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "start": "bun --env-file ../../packages/kernel/.env src/cli.ts",
+    "start": "bun src/cli.ts",
     "typecheck": "../../packages/kernel/node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {

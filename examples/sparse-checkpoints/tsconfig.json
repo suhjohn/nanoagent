@@ -7,14 +7,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2024",
-    "types": ["bun-types"],
     "paths": {
-      "@ai-sdk/openai": [
-        "../../packages/kernel/node_modules/@ai-sdk/openai"
-      ],
-      "@ai-sdk/openai/*": [
-        "../../packages/kernel/node_modules/@ai-sdk/openai/*"
-      ],
       "ai": ["../../packages/kernel/node_modules/ai"],
       "ai/*": ["../../packages/kernel/node_modules/ai/*"],
       "@nanoagent/kernel": ["../../packages/kernel/src/index.ts"]

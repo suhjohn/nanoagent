@@ -1,42 +1,42 @@
 # Human Approval
 
-Pause an agent before a sensitive tool runs, ask a human in Slack, then resume.
+**Pause for a human. Resume hours later. Same hook handles both ends.**
 
-## The problem
+## What this showcases
 
-Some tool calls (charge a card, send an email, delete a record) need human sign-off. The agent should stop, surface what it wants to do, wait for a decision, and continue if approved, possibly hours or days later, possibly in a different process.
+Sensitive tool calls — charging a card, sending an email, deleting a record — need a human in the loop. The agent should freeze on the exact tool call, surface the decision to wherever humans live, then continue when approval arrives.
+
+Kernel makes this one hook with one branch.
 
 ## The pattern
 
-Approval state lives in caller-owned context, not kernel state. Kernel handles the pause marker and keeps the pending tool call; caller orchestrates the approval round-trip.
+`onToolCallStarted` runs twice for the same call: once before approval (pauses the run), once after approval (lets it through). State stays durable in between.
 
-**Pause path**:
+**Pause path**
 
-1. `onToolCallStarted` sees `toolName === "ChargeCard"` and checks whether `toolCallId` is already in `context.approved`.
-2. If not approved, returns `{ control: { type: "pause", reason: "approval_required", metadata: { toolCallId, toolName } } }`.
-3. Kernel commits a `pause` event with that metadata. The tool call stays pending in saved state.
-4. `saveState` writes the run, finds the pause event in the committed events, and posts a Slack message with the tool details.
+1. `onToolCallStarted` sees `toolName === "ChargeCard"` and checks `context.approvedToolCallIds`.
+2. Call id is not approved. Hook returns `{ control: { type: "pause", reason: "approval_required", metadata: { toolCallId, toolName } } }`.
+3. Kernel commits a `pause` event. Pending tool call stays in saved state.
 
-**Resume path**:
+**Resume path**
 
-1. Slack handler calls `approveFromSlack`, which loads state and adds `toolCallId` to `context.approved`.
-2. Saves state, then calls the same `startOrResume`.
-3. Kernel clears the pause marker and re-enters `onToolCallStarted` for the same call.
-4. Hook sees the ID in `context.approved` and returns nothing. Tool runs.
+1. The caller loads state, adds `toolCallId` to `context.approvedToolCallIds`, saves, then calls `runAgent` again.
+2. Kernel clears the pause marker and re-enters `onToolCallStarted` for the same call.
+3. Hook sees the id in `context.approvedToolCallIds` and returns nothing. Tool runs.
 
-The same hook handles both the pause and the resume. Adding a tool to the approval gate means adding one branch in `onToolCallStarted`.
+One hook, both directions. Adding a tool to the gate is one new branch.
+
+## Try it
+
+```sh
+bun run start
+```
+
+The CLI posts a pending `ChargeCard` approval and waits. Type `/approve` to approve the latest paused run, execute the tool, and resume the model.
 
 ## Source
 
 See [src/index.ts](./src/index.ts).
-
-## Run
-
-```sh
-bun run start "Run the approved charge and summarize the result."
-```
-
-The CLI seeds a pending `ChargeCard` tool call, pauses for approval, approves it, executes the tool, then resumes the model with real providers from `packages/kernel/.env`.
 
 ## Check
 

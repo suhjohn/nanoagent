@@ -451,7 +451,50 @@ describe('runAgent unit durability scenarios', () => {
         })
       )
     ).rejects.toThrow('Cannot safely resume while tool calls are in flight.')
-    expect(recorder.latest()?.status.type).toBe('failed')
+    expect(recorder.latest()?.status).toMatchObject({
+      type: 'failed',
+      phase: 'tool_call_completed'
+    })
+    expect(recorder.events.at(-1)).toMatchObject({
+      type: 'run_failed',
+      phase: 'tool_call_completed'
+    })
+  })
+
+  test('resumes failed snapshots from their saved phase', async () => {
+    const log: string[] = []
+    const recorder = makeSnapshotRecorder<UnitContext>()
+    const failedSnapshot: AgentRunState<UnitContext> = {
+      ...modelCompletedSnapshot({
+        pending: [toolCall('call-a', 'A')]
+      }),
+      status: {
+        type: 'failed',
+        phase: 'model_completed',
+        error: { message: 'process crashed' },
+        createdAt: new Date(0).toISOString()
+      }
+    }
+
+    await collect(
+      runAgent({
+        saveState: recorder.saveState,
+        maxTurns: 3,
+        hooks: resumeOnlyHooks(),
+        ...mkRuntime(failedSnapshot, tools(log))
+      })
+    )
+
+    expect(log).toEqual(['A:{}'])
+    expect(recorder.events.map(event => event.type)).toEqual([
+      'tool_calls_started',
+      'tool_call_started',
+      'tool_call_completed',
+      'tool_calls_completed',
+      'turn_completed',
+      'run_completed'
+    ])
+    expect(recorder.latest()?.status.type).toBe('completed')
   })
 
   test('snapshots context-only hook updates even when no event is emitted', async () => {

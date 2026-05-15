@@ -76,7 +76,7 @@ describe('agent plugin integration', () => {
       withQuestionTool({
         ask: params => {
           answers.push(params.input)
-          return { answers: { choice: 'A' } }
+          return { answers: { choice: { answers: ['A'] } } }
         }
       }),
       withToolErrorBoundary(error => error.error)

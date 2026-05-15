@@ -1,4 +1,4 @@
-import { tool, jsonSchema, type ModelMessage } from "ai";
+import { tool, jsonSchema, type ModelMessage, type ToolSet } from "ai";
 import { type JsonLike, runAgent, type AgentStreamEvent, type AgentModelProviders, type AgentHooks, type AgentRunStatus } from "@nanoagent/kernel";
 
 export type ChatMessage = {
@@ -9,53 +9,72 @@ export type ChatMessage = {
 
 export type Context = {
   [key: string]: JsonLike;
-  approvedToolCallIds: readonly string[];
   messages: ChatMessage[];
 };
 
-export type HumanApprovalDeps = {
+export type SkipProtectedDeps = {
   modelProviders?: AgentModelProviders;
   streamToClient?: (event: AgentStreamEvent) => void;
 };
 
 export const tools = {
-  ChargeCard: tool({
-    description: "Charge the customer's card. Amount in USD cents.",
-    inputSchema: jsonSchema<{ amountCents: number; currency: "usd" }>({
+  deleteFile: tool({
+    description: "Delete a file at the provided path.",
+    inputSchema: jsonSchema<{ path: string }>({
       type: "object",
       additionalProperties: false,
       properties: {
-        amountCents: { type: "number" },
-        currency: { type: "string", enum: ["usd"] },
+        path: { type: "string" },
       },
-      required: ["amountCents", "currency"],
+      required: ["path"],
     }),
-    execute: async (input) => {
-      return { status: "succeeded", amount: input.amountCents };
+    execute: async ({ path }) => {
+      if (isProtectedPath({ path })) {
+        throw new Error(`deleteFile executor should not run for protected path: ${path}`);
+      }
+      return { deleted: path };
     },
   }),
-};
+} satisfies ToolSet;
+
+function isProtectedPath(input: unknown) {
+  if (typeof input !== "object" || input === null) return false;
+  const path = (input as { path?: unknown }).path;
+  return (
+    typeof path === "string" &&
+    (path.startsWith("/private/") ||
+      path.startsWith("/etc/") ||
+      path.includes(".."))
+  );
+}
 
 function makeHooks(): AgentHooks<Context> {
   return {
-    onTurnPrepared: ({ context }) => ({
+    onTurnPrepared: ({ context, state }) => ({
       value: {
-        model: "openai/gpt-5.4-mini", // fallback to standard model
+        model: "openai/gpt-5.4-mini",
         messages: context.messages as unknown as ModelMessage[],
+        toolChoice:
+          state.turns.length === 0
+            ? { type: "tool", toolName: "deleteFile" }
+            : "auto",
       },
     }),
 
-    onToolCallStarted: ({ context, toolCallId, toolName }) => {
-      if (toolName !== "ChargeCard") return;
-      if (context.approvedToolCallIds.includes(toolCallId)) return;
-
-      return {
-        control: {
-          type: "pause",
-          reason: "approval_required",
-          metadata: { toolCallId, toolName },
-        },
-      };
+    onToolCallStarted: ({ toolCallId, toolName, input }) => {
+      if (toolName === "deleteFile" && isProtectedPath(input)) {
+        return {
+          value: {
+            type: "skip",
+            result: {
+              toolCallId,
+              toolName,
+              input,
+              output: { blocked: true, reason: "protected_path" },
+            },
+          },
+        };
+      }
     },
 
     onTurnCompleted: ({ context, turn }) => {
@@ -85,29 +104,27 @@ function makeHooks(): AgentHooks<Context> {
   };
 }
 
-export async function runHumanApproval(params: {
-  deps: HumanApprovalDeps;
+export async function runSkipProtected(params: {
+  deps: SkipProtectedDeps;
   runId: string;
   context: Context;
 }) {
   let finalContext = params.context;
   let finalStatus: AgentRunStatus | undefined;
-  let finalRevision = 0;
 
   for await (const event of runAgent<Context>({
     state: { runId: params.runId, context: params.context },
     tools,
     modelProviders: params.deps.modelProviders,
     hooks: makeHooks(),
-    maxTurns: 5,
+    maxTurns: 3,
     saveState: async ({ state }) => {
       finalContext = state.context;
       finalStatus = state.status;
-      finalRevision = state.revision;
-    }
+    },
   })) {
     params.deps.streamToClient?.(event);
   }
 
-  return { context: finalContext, status: finalStatus, revision: finalRevision };
+  return { context: finalContext, status: finalStatus };
 }

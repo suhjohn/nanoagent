@@ -13,6 +13,10 @@ coverage/
 .cache/
 .turbo/
 
+# Agent and external tool artifacts
+agent-logs/
+pkg/
+
 # Local environment files
 .env
 .env.*

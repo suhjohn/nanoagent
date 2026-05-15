@@ -1,0 +1,1243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@nanoagent/kernel</title>
+    <style>
+      :root {
+        --ink: #0e1525;
+        --muted: #6b7280;
+        --soft: #9ca3af;
+        --line: #e5e7eb;
+        --line-soft: #f3f4f6;
+        --panel: #ffffff;
+        --bg: #fbfbfa;
+        --kernel: #16a34a;
+        --io: #d97706;
+        --terminal: #7c3aed;
+        --accent: #2563eb;
+        --code-bg: #f4f5f7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        background: var(--bg);
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Inter",
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.55;
+        font-size: 15px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .container {
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 72px 32px 96px;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p,
+      ul {
+        margin: 0;
+      }
+
+      code {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        background: var(--code-bg);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 0.88em;
+        color: var(--ink);
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* HERO */
+      .hero {
+        margin-bottom: 64px;
+      }
+      .hero h1 {
+        font-size: 42px;
+        letter-spacing: -0.025em;
+        font-weight: 700;
+        line-height: 1.05;
+        margin-bottom: 18px;
+      }
+      .hero p {
+        font-size: 17px;
+        color: var(--muted);
+        max-width: 620px;
+      }
+
+      /* SECTIONS */
+      .section {
+        margin-bottom: 64px;
+      }
+
+      .eyebrow {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-weight: 700;
+        color: var(--soft);
+        margin-bottom: 24px;
+      }
+
+      .section-intro {
+        color: var(--muted);
+        max-width: 680px;
+        margin-bottom: 24px;
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      /* FLOWING PROSE */
+      .flow {
+        max-width: 680px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .flow > p {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.65;
+        margin: 0;
+      }
+      .term {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        font-weight: 600;
+        color: var(--ink);
+        font-size: 14px;
+      }
+      .term-plain {
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      /* DOC LINKS */
+      .doc-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .doc-links a {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 6px 12px;
+      }
+      .doc-links a:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .doc-links a.active {
+        border-color: var(--ink);
+        color: var(--ink);
+      }
+
+      .doc-viewer {
+        display: none;
+      }
+      .doc-viewer.active {
+        display: block;
+      }
+      .doc-viewer h1,
+      .doc-viewer h2,
+      .doc-viewer h3 {
+        letter-spacing: -0.015em;
+        line-height: 1.2;
+      }
+      .doc-viewer h1 {
+        font-size: 34px;
+        margin-bottom: 24px;
+      }
+      .doc-viewer h2 {
+        font-size: 24px;
+        margin: 40px 0 14px;
+      }
+      .doc-viewer h3 {
+        font-size: 18px;
+        margin: 28px 0 10px;
+      }
+      .doc-viewer p,
+      .doc-viewer li {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+      .doc-viewer p {
+        margin: 0 0 16px;
+      }
+      .doc-viewer ul {
+        padding-left: 22px;
+        margin: 0 0 18px;
+      }
+      .doc-viewer pre {
+        margin: 18px 0 24px;
+      }
+      .doc-viewer .back-link {
+        display: inline-block;
+        margin-bottom: 28px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      /* TIMELINE */
+      .timeline {
+        position: relative;
+      }
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 11px;
+        top: 10px;
+        bottom: 10px;
+        width: 2px;
+        background: var(--line);
+      }
+
+      .group {
+        position: relative;
+        padding-left: 56px;
+        padding-bottom: 32px;
+      }
+      .group:last-child {
+        padding-bottom: 0;
+      }
+
+      .group-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-weight: 700;
+        color: var(--ink);
+        margin-bottom: 14px;
+        margin-left: -56px;
+        padding-left: 56px;
+        position: relative;
+        line-height: 24px;
+      }
+      .group-label::before {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 5px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--bg);
+        border: 2px solid var(--ink);
+      }
+      .group-label .group-note {
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+        font-weight: 400;
+        margin-left: 8px;
+      }
+
+      .phase {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 32px;
+        padding: 14px 0;
+        position: relative;
+        align-items: start;
+      }
+      .phase + .phase {
+        border-top: 1px solid var(--line-soft);
+      }
+      .phase::before {
+        content: "";
+        position: absolute;
+        left: -49px;
+        top: 22px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--panel);
+        border: 2px solid var(--line);
+      }
+      .phase.io::before {
+        border-color: var(--io);
+      }
+
+      .phase-name {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .phase-name .required {
+        display: inline-block;
+        margin-left: 8px;
+        font-family: inherit;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        vertical-align: 1px;
+        font-weight: 700;
+      }
+      .phase-meta {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .phase-detail {
+        font-size: 14px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .branch {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 32px;
+        padding: 12px 0;
+        position: relative;
+      }
+      .branch + .branch {
+        border-top: 1px solid var(--line-soft);
+      }
+      .branch::before {
+        content: "↳";
+        position: absolute;
+        left: -52px;
+        top: 8px;
+        color: var(--soft);
+        font-size: 18px;
+        line-height: 1;
+      }
+      .branch-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink);
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      .branch-detail {
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      /* CODE BLOCK */
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px 20px;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        font-size: 12.5px;
+        line-height: 1.7;
+        overflow-x: auto;
+        margin: 24px 0 0;
+      }
+      pre code {
+        background: none;
+        border: none;
+        padding: 0;
+        font-size: inherit;
+        color: var(--ink);
+      }
+      pre .c {
+        color: var(--soft);
+      }
+      pre .k {
+        color: #7c3aed;
+      }
+      pre .s {
+        color: #16a34a;
+      }
+
+      /* FOOTER */
+      .footer {
+        border-top: 1px solid var(--line);
+        margin-top: 64px;
+        padding-top: 24px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        font-size: 13px;
+      }
+      .footer a {
+        color: var(--muted);
+      }
+      .footer a:hover {
+        color: var(--accent);
+      }
+
+      @media (max-width: 720px) {
+        .container {
+          padding: 48px 20px 64px;
+        }
+        .hero h1 {
+          font-size: 34px;
+        }
+        .phase,
+        .branch {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header class="hero">
+        <h1>@nanoagent/kernel</h1>
+        <p>
+          Not a harness. Kernel advances one state machine through phases and
+          commits revisioned
+          <code>AgentRunState</code>. Caller owns sessions, prompts, tools,
+          providers, storage, UI, and product policy. Every core lifecycle
+          boundary has a hook checkpoint and a streamed event.
+        </p>
+      </header>
+
+      <section class="section">
+        <div class="eyebrow">Reference</div>
+        <nav class="doc-links" aria-label="Kernel reference docs">
+          <a href="#" data-overview>Overview</a>
+          <a href="#docs/api" data-doc="api.md">API</a>
+          <a href="#docs/state" data-doc="state.md">State</a>
+          <a href="#docs/hooks" data-doc="hooks.md">Hooks</a>
+          <a href="#docs/middleware" data-doc="middleware.md">Middleware</a>
+          <a href="#docs/tools" data-doc="tools.md">Tools</a>
+          <a href="#docs/models" data-doc="models.md">Models</a>
+          <a href="#docs/comparison" data-doc="comparison.md">Comparison</a>
+          <a href="#docs/qna" data-doc="qna.md">Q&amp;A</a>
+        </nav>
+      </section>
+
+      <section class="section doc-viewer" id="doc-viewer"></section>
+
+      <div id="home-content">
+      <section class="section">
+        <div class="eyebrow">Why</div>
+        <p class="section-intro">
+          I kept wanting the same low-level agent loop with different production
+          choices around it. Existing SDKs and harnesses helped when I accepted
+          their runtime shape, storage model, protocol, tool registry,
+          permission system, compaction strategy, retries, and product policy.
+          They got in the way when I needed control over the execution state
+          itself.
+        </p>
+        <div class="flow">
+          <p>
+            Most agent harnesses feel like frontend frameworks from the early
+            2010s: Backbone.js, Angular.js, and the era where framework owned
+            routing, state, templates, lifecycle, plugins, and application
+            shape. I wanted the agent-loop equivalent of crisp React: small core,
+            explicit data flow, caller-owned architecture, and enough lifecycle
+            hooks to build real products without inheriting someone else's app.
+          </p>
+          <p>
+            I wanted uneven state: run snapshots in Postgres, bulky transcript
+            artifacts and traces in S3, and message history loaded from remote
+            storage fresh on each turn. Existing SDKs usually made session
+            persistence part of their product runtime instead of giving me a
+            small durable state machine I could persist however I wanted.
+          </p>
+          <p>
+            I wanted to experiment with compaction: summarize old turns into a
+            system note, keep tool results but drop intermediate reasoning,
+            build retrieval chunks from transcript history, or compact only when
+            remote message storage crosses a token budget. Existing abstractions
+            tended to bake compaction into the harness, or hide the exact
+            boundary where future model input is assembled.
+          </p>
+          <p>
+            I wanted an inbox so incoming user messages could queue up and steer
+            the next turn. I wanted some agents to rebuild model messages from
+            remote storage every turn, not from an internal transcript chosen by
+            the SDK. That means the loop needs a clean preparation point before
+            every model call.
+          </p>
+          <p>
+            I wanted tool policy at two levels: inspect the entire set of tool
+            calls for a turn before any call runs, then inspect each individual
+            call with its arguments. Existing permission systems were often
+            product-specific switches around a tool registry, not checkpoints in
+            the execution state.
+          </p>
+          <p>
+            I wanted provider-agnostic model routing and live streaming of tool
+            requests while the model was still producing them. I wanted to swap
+            OpenAI for Anthropic, route tenants through signed gateways, and
+            resume from the last committed phase without adopting someone else's
+            CLI, server, store, or session object.
+          </p>
+          <p>
+            Kernel extracts the part that keeps getting rewritten: advance
+            turns, call the model, expose streamed parts, run tools, commit
+            ordered state, pause, resume, fail, and complete. Every boundary
+            exposes both control surface and event surface: hooks decide what
+            happens next, events tell the outside world what just committed.
+            Everything else stays in caller code because production agents are
+            differentiated by those decisions.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Not a harness</div>
+        <p class="section-intro">
+          The kernel is one function — <code>runAgent</code>. No runtime, no
+          scheduler, no storage adapter, no CLI, no router. It plugs into
+          whatever surrounding system you've already built.
+        </p>
+        <div class="flow">
+          <p>
+            <span class="term-plain">Runtime.</span> Wrap
+            <code>runAgent</code> in an HTTP handler that streams events to SSE
+            or WebSocket, a queue consumer that processes resumable jobs, a CLI
+            that writes events to stdout, a durable function (Cloudflare Durable
+            Objects, Temporal, Inngest), or a unit test iterating fully
+            in-memory. Same kernel; the wrapper is whatever surface you need.
+            Kernel doesn't own the process.
+          </p>
+          <p>
+            <span class="term-plain">State.</span> <code>saveState</code>
+            is a plain async function, so state lands wherever you write it —
+            Postgres, SQLite, Redis, blob storage (S3, R2, GCS), local
+            filesystem, remote filesystem (NFS, FUSE, SFTP), Cloudflare Durable
+            Objects, or an in-memory map for tests. No adapter SDK to learn, no
+            storage interface to implement; just write the snapshot the way
+            you'd persist any JSON.
+          </p>
+          <p>
+            <span class="term-plain">Everything else.</span> Providers, tools,
+            and middleware are caller-supplied too — kernel doesn't import a
+            model SDK, execute a tool, or wrap an I/O call unless you pass it
+            in. The same kernel runs behind a real-time chat UI, an overnight
+            batch job, and a debug CLI; only the wrapper changes per surface.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">API</div>
+        <p class="section-intro">
+          <code>runAgent</code> is an async generator. Configure it with hooks
+          (only <code>onTurnPrepared</code> is required), tools, middleware, and
+          a <code>saveState</code> persister. Each core lifecycle phase has a
+          matching hook and streamed event; drive the loop by iterating those
+          events.
+        </p>
+        <pre><code><span class="k">import</span> { runAgent } <span class="k">from</span> <span class="s">'@nanoagent/kernel'</span>
+
+<span class="k">for await</span> (<span class="k">const</span> event <span class="k">of</span> runAgent({
+  state: { context: { userId } },              <span class="c">// caller-owned context shape</span>
+  maxTurns: <span class="s">10</span>,
+
+  hooks: {
+    onTurnPrepared: ({ context, state }) =&gt; ({ <span class="c">// required: build model input</span>
+      model: <span class="s">'openai/gpt-5.5'</span>,                  <span class="c">// &lt;provider&gt;/&lt;model&gt;</span>
+      messages: assembleMessages(context, state),
+    }),
+    onToolCallStarted: ({ toolCall }) =&gt;         <span class="c">// optional: gate, skip, rewrite</span>
+      gateApproval(toolCall),
+    <span class="c">// one hook per phase — see Run Lifecycle for the full set</span>
+  },
+
+  tools: { searchDocs, runQuery },             <span class="c">// Vercel AI SDK tool set</span>
+
+  middleware: {
+    callModel: [withCache, withTracing],       <span class="c">// wrap streamText</span>
+    callTool:  [withSandbox],                  <span class="c">// wrap tool execution</span>
+  },
+
+  saveState: <span class="k">async</span> ({ state, events }) =&gt; {    <span class="c">// durability boundary</span>
+    <span class="k">await</span> store.commit({ state, events })
+  },
+})) {
+  publish(event)                               <span class="c">// forward to UI, queue, log</span>
+}</code></pre>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Run Lifecycle</div>
+        <p class="section-intro">
+          <code>runAgent</code> is one async generator. It advances a run
+          through ordered phases, commits <code>AgentRunState</code> before each
+          durable event, yields those events to the caller, and also yields live
+          <code>stream_part</code> events while the model is producing output.
+          Hooks are checkpoints inside this flow; the public shape is the event
+          stream you iterate.
+        </p>
+
+        <div class="timeline">
+          <div class="group">
+            <div class="group-label">Start</div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">Start run</div>
+                <div class="phase-meta">streams run_started</div>
+                <div class="phase-meta">hook onRunStarted</div>
+              </div>
+              <div class="phase-detail">
+                First phase of a fresh run. On resume from a paused snapshot
+                kernel skips this and rejoins at the saved phase.
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">Turn setup</div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">Open turn</div>
+                <div class="phase-meta">streams turn_started</div>
+                <div class="phase-meta">hook onTurnStarted</div>
+              </div>
+              <div class="phase-detail">
+                Kernel allocates a new <code>Turn</code> with a fresh
+                <code>turnId</code>.
+              </div>
+            </div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">
+                  Prepare model input<span class="required">required</span>
+                </div>
+                <div class="phase-meta">streams turn_prepared</div>
+                <div class="phase-meta">hook onTurnPrepared</div>
+              </div>
+              <div class="phase-detail">
+                Caller returns exact <code>streamText</code> args: model,
+                messages, params. The only required hook; this is the message
+                assembly boundary.
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">Model</div>
+            <div class="phase io">
+              <div>
+                <div class="phase-name">Start model call</div>
+                <div class="phase-meta">streams model_started</div>
+                <div class="phase-meta">hook onModelStarted</div>
+              </div>
+              <div class="phase-detail">
+                <code>callModel</code> middleware wraps the
+                <code>streamText</code> invocation. The committed event carries
+                model args used for this turn.
+              </div>
+            </div>
+            <div class="branch">
+              <div class="branch-name">stream_part</div>
+              <div class="branch-detail">
+                While <code>streamText</code> runs, every text delta, tool-call
+                delta, reasoning part, warning, and finish signal yields live as
+                <code>stream_part</code>. These events are not persisted through
+                <code>saveState</code>; final model result is committed next.
+              </div>
+            </div>
+            <div class="phase io">
+              <div>
+                <div class="phase-name">Commit model result</div>
+                <div class="phase-meta">streams model_completed</div>
+                <div class="phase-meta">hook onModelCompleted</div>
+              </div>
+              <div class="phase-detail">
+                <code>AgentModelResult</code> committed. Raw SDK result
+                available on the hook for extracting reasoning, sources, steps.
+                With no tool calls, kernel jumps straight to
+                <code>turn_completed</code>.
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">
+              Tools
+              <span class="group-note"
+                >only when the model requested tool calls</span
+              >
+            </div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">Review tool batch</div>
+                <div class="phase-meta">streams tool_calls_started</div>
+                <div class="phase-meta">hook onToolCallsStarted</div>
+              </div>
+              <div class="phase-detail">
+                Kernel exposes the full pending call list before any tool runs.
+                Caller may rewrite, reorder, drop, approve, or pause the batch.
+              </div>
+            </div>
+            <div class="phase io">
+              <div>
+                <div class="phase-name">Start tool call</div>
+                <div class="phase-meta">streams tool_call_started</div>
+                <div class="phase-meta">hook onToolCallStarted</div>
+              </div>
+              <div class="phase-detail">
+                Fires per call. Caller may block this exact call, skip it with a
+                synthetic result, or allow execution.
+              </div>
+            </div>
+            <div class="phase io">
+              <div>
+                <div class="phase-name">Commit tool result</div>
+                <div class="phase-meta">streams tool_call_completed</div>
+                <div class="phase-meta">hook onToolCallCompleted</div>
+              </div>
+              <div class="phase-detail">
+                <code>callTool</code> middleware wraps each execution. Accepted
+                calls run in parallel; each completion commits independently.
+              </div>
+            </div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">Close tool batch</div>
+                <div class="phase-meta">streams tool_calls_completed</div>
+                <div class="phase-meta">hook onToolCallsCompleted</div>
+              </div>
+              <div class="phase-detail">
+                All tool responses recorded on the turn.
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">Turn end</div>
+            <div class="phase">
+              <div>
+                <div class="phase-name">Close turn</div>
+                <div class="phase-meta">streams turn_completed</div>
+                <div class="phase-meta">hook onTurnCompleted</div>
+              </div>
+              <div class="phase-detail">
+                Turn appended to <code>state.turns</code>. Kernel decides what's
+                next:
+              </div>
+            </div>
+            <div class="branch">
+              <div class="branch-name">next turn</div>
+              <div class="branch-detail">
+                If tool calls ran (or a hook returned <code>continue</code>),
+                and turn &lt; <code>maxTurns</code>, kernel loops back to
+                <code>turn_started</code> for another model step.
+              </div>
+            </div>
+            <div class="branch">
+              <div class="branch-name">run_completed</div>
+              <div class="branch-detail">
+                Otherwise streams <code>run_completed</code> after
+                <code>onRunCompleted</code>, source = <code>model_done</code> |
+                <code>max_turns</code> | <code>caller</code>.
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">Resume and stop events</div>
+            <div class="branch">
+              <div class="branch-name">pause</div>
+              <div class="branch-detail">
+                Any checkpoint may return <code>control: pause</code>. Kernel
+                commits a paused snapshot and streams <code>pause</code> with
+                the phase that stopped.
+              </div>
+            </div>
+            <div class="branch">
+              <div class="branch-name">model_restarted</div>
+              <div class="branch-detail">
+                Resuming from <code>model_started</code> streams
+                <code>model_restarted</code> before calling the model again, so
+                consumers can distinguish replay from first start.
+              </div>
+            </div>
+            <div class="branch">
+              <div class="branch-name">run_failed</div>
+              <div class="branch-detail">
+                If a phase throws, kernel commits failed state, streams
+                <code>run_failed</code> with serialized error details, then
+                rethrows to the caller's iterator.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="events">
+        <div class="eyebrow">Events</div>
+        <p class="section-intro">
+          <code>runAgent</code> is an async generator. It yields durable phase
+          events plus live model <code>stream_part</code> events. The phase
+          events are the same objects passed to <code>saveState</code>; stream
+          parts are live only.
+        </p>
+        <div class="flow">
+          <p>
+            One <span class="term-plain">phase event</span> is yielded per phase
+            transition. The <code>type</code> field matches the phase name —
+            <code>run_started</code>, <code>turn_prepared</code>,
+            <code>model_completed</code>, <code>tool_call_completed</code>,
+            <code>turn_completed</code>, <code>run_completed</code>, and the
+            rest. Each carries <code>runId</code>, <code>revision</code>,
+            <code>createdAt</code>, and a snapshot of the current turn; some add
+            <code>duration</code> and phase-specific payload (model args/result,
+            tool input/output, completion source).
+          </p>
+          <p>
+            Three additional lifecycle events flow through the same channel:
+            <code>pause</code> when a hook pauses the run (carries the phase it
+            paused at), <code>model_restarted</code> on resume from
+            <code>model_started</code> instead of re-emitting it, and
+            <code>run_failed</code> with a serialized error.
+            <code>saveState.events</code> contains this same
+            <code>AgentPhaseEvent</code> type, scoped to the current state
+            commit.
+          </p>
+          <p>
+            During <code>model_started</code>, every part the model produces
+            yields as a <span class="term">stream_part</span> event — text
+            deltas, tool-call deltas, reasoning, finish reasons, warnings. The
+            payload is the raw Vercel AI SDK <code>TextStreamPart</code> on
+            <code>.part</code>, plus <code>runId</code>, <code>turnId</code>,
+            and <code>turn</code> number for routing;
+            <code>onStreamUpdate</code> observes the same parts inside the
+            kernel. These are not <code>AgentPhaseEvent</code> values and never
+            appear in <code>saveState.events</code>. Kernel commits the final
+            <code>AgentModelResult</code> on <code>model_completed</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Control from any hook</div>
+        <p class="section-intro">
+          Control is caller-owned. Every hook is a checkpoint that can let the
+          run proceed, pause it durably, finish it, or force another turn. Hooks
+          return <code>{ context, value, control }</code>, and the kernel awaits
+          each one before committing the next phase. Approval queues, budget
+          gates, policy checks, model calls, and external waits live in hook
+          code without a separate scheduler.
+        </p>
+        <div class="flow">
+          <p>
+            <span class="term">pause</span> works from any hook at any moment in
+            the run. It commits a <code>paused</code> snapshot at the exact
+            phase boundary, emits a pause event, and stops before more work
+            starts. Resume by passing the saved state back into
+            <code>runAgent</code>. Use it for human approval before a tool runs,
+            rate limits, budget holds, worker handoff, webhooks, CI results, and
+            user decisions.
+          </p>
+          <p>
+            <span class="term">finish</span> queues a
+            <code>caller</code>-sourced run completion at the next checkpoint.
+            Product code decides when the goal is met: structured output
+            validated, content approved, cost ceiling reached, or downstream
+            system accepted the result.
+          </p>
+          <p>
+            <span class="term">continue</span> forces another turn after
+            <code>turn_completed</code> even when no tool calls ran. Use it for
+            critique passes, judge turns, validators, draft-revise loops, and
+            multi-stage flows where product workflow decides completion.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Terminal states</div>
+        <div class="flow">
+          <p>
+            <span class="term">completed</span> — sources:
+            <code>model_done</code> (no tool calls last turn),
+            <code>max_turns</code>, or <code>caller</code> (hook returned
+            <code>finish</code>).
+          </p>
+          <p>
+            <span class="term">failed</span> — <code>onRunFailed</code> fires,
+            the error is serialized into state with the failed phase, and
+            re-thrown to the caller's iterator. Passing the snapshot back to
+            <code>runAgent</code>
+            resumes from that phase.
+          </p>
+          <p>
+            <span class="term">paused</span> — resumable from the saved phase;
+            <code>onModelRestarted</code> fires when resuming from
+            <code>model_started</code>.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">saveState</div>
+        <p class="section-intro">
+          The durability boundary. Kernel calls
+          <code>saveState({ state, events })</code> before every phase event
+          yields — same call for live, paused, and failed snapshots. Awaited; if
+          it throws, the run fails. Optional — omit it and the kernel still
+          runs, just nothing persists.
+        </p>
+        <div class="flow">
+          <p>
+            <span class="term-plain">Invocation.</span> Fires on every state
+            commit, before the matching events reach the iterator — so anything
+            the caller observes is already durable. <code>state</code> is a
+            fresh deep-clone of the new snapshot; <code>events</code> is the
+            commit-local list of phase events about to emit. It is the delta
+            from the previous committed revision to this revision, not full
+            event history.
+          </p>
+          <p>
+            <span class="term-plain">Atomic unit.</span> State and events share
+            the same <code>revision</code>. Persist them together — one
+            transaction or batch — and readers get exactly the state that
+            produced the events. Use <code>state.revision</code> for optimistic
+            concurrency: reject writes whose revision isn't greater than the
+            stored one.
+          </p>
+          <p>
+            <span class="term-plain">What to store.</span> Latest
+            <code>state</code> keyed by <code>runId</code> is enough to resume.
+            Append-only <code>events</code> keyed by
+            <code>(runId, revision)</code> give you audit log, replay, and
+            projections (UI feeds, metrics streams). Insert only events from
+            current <code>saveState</code> call; never reinsert prior revisions.
+            Either or both.
+          </p>
+        </div>
+        <pre><code><span class="k">const</span> saveState = <span class="k">async</span> ({ state, events }) =&gt; {
+  <span class="k">await</span> db.transaction(<span class="k">async</span> (tx) =&gt; {
+    <span class="c">// commit-local phase events for state.revision only</span>
+    <span class="k">await</span> tx.insertEvents(events.map((e) =&gt; ({
+      runId:    state.runId,
+      revision: state.revision,
+      payload:  e,
+    })))
+
+    <span class="c">// upsert latest state — reject stale writes</span>
+    <span class="k">await</span> tx.upsertState(state, {
+      where: { revision: { lt: state.revision } },
+    })
+  })
+}</code></pre>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Resume &amp; recover</div>
+        <p class="section-intro">
+          With state persisted, both pause and failure become resumable
+          checkpoints. Load the snapshot and pass it back to
+          <code>runAgent</code>.
+        </p>
+        <div class="flow">
+          <p>
+            <span class="term-plain">Resume from pause.</span> Pass a
+            <code>status: paused</code> snapshot back as <code>state</code> on
+            the next <code>runAgent</code> call. Kernel flips status to
+            <code>running</code> at the saved phase and continues.
+            <code>onModelRestarted</code> fires when re-entering
+            <code>model_started</code>.
+          </p>
+          <p>
+            <span class="term-plain">Recover from failure.</span> Failed runs
+            commit <code>status: failed</code> with a serialized error and the
+            failed phase, then re-throw to the iterator. Pass the snapshot back
+            to <code>runAgent</code> to retry from the saved phase after
+            inspection, operator action, or a later user message.
+          </p>
+          <p>
+            <span class="term-plain">Provider failure.</span> If
+            <code>streamText</code> fails because provider returns 500, run has
+            already committed <code>model_started</code>. Kernel saves
+            <code>status: failed</code> with <code>phase: model_started</code>.
+            When provider recovers, pass same snapshot back; kernel emits
+            <code>model_restarted</code> and reruns the model call with the
+            saved turn args.
+          </p>
+          <p>
+            <span class="term-plain">Recover from process exit.</span> If the
+            process exits, load the latest committed snapshot and pass it back
+            as <code>state</code>. A <code>running</code> snapshot continues
+            from its phase; <code>model_started</code> restarts the model call.
+            In-flight tool calls stay guarded because external side effects may
+            already have started.
+          </p>
+        </div>
+        <pre><code><span class="k">async function</span> runOrResume(runId, context) {
+  <span class="k">const</span> saved = <span class="k">await</span> store.load(runId)
+
+  <span class="k">for await</span> (<span class="k">const</span> event <span class="k">of</span> runAgent({
+    state: saved ?? { runId, context },         <span class="c">// fresh or resumed</span>
+    hooks: { onTurnPrepared },
+    maxTurns: <span class="s">20</span>,
+    saveState: <span class="k">async</span> ({ state, events }) =&gt; {
+      <span class="k">await</span> store.commit({ state, events })   <span class="c">// fires on every phase</span>
+    },
+  })) {
+    publish(event)                              <span class="c">// UI, logs, queues</span>
+  }
+}
+
+<span class="c">// On pause:   store has status: paused — call runOrResume(runId) again to continue.</span>
+<span class="c">// On failure: store has status: failed + phase + serialized error — inspect, then</span>
+<span class="c">//             call runOrResume(runId) again to retry from the saved phase.</span>
+<span class="c">// On 500:     failed phase is model_started; retry emits model_restarted and calls the model again.</span>
+<span class="c">// On exit:    store has the last committed running snapshot — restart worker and call runOrResume(runId).</span></code></pre>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Providers</div>
+        <p class="section-intro">
+          <code>onTurnPrepared</code> returns the model as a string like
+          <code>openai/gpt-5.5</code> or <code>anthropic/claude-opus-4-7</code>.
+          Kernel splits on the first <code>/</code>, looks up the provider in
+          its registry, and calls the provider function with the model name to
+          get a Vercel AI SDK model that <code>streamText</code> drives.
+          Provider keys are case-insensitive and trimmed.
+        </p>
+        <div class="flow">
+          <p>
+            <span class="term-plain">Bundled.</span> The major Vercel AI SDK
+            providers are registered by default — no setup needed beyond the
+            relevant API key in env: openai, anthropic, google (alias
+            <code>gemini</code>), vertex (alias <code>google-vertex</code>),
+            azure, bedrock (alias <code>amazon-bedrock</code>), xai (alias
+            <code>grok</code>), mistral, cohere, deepseek, groq, perplexity,
+            cerebras, fireworks, together (alias <code>togetherai</code>),
+            deepinfra, baseten, vercel.
+          </p>
+          <p>
+            <span class="term-plain">Custom &amp; override.</span> Pass
+            <code>modelProviders</code> to <code>runAgent</code>. Each entry is
+            a function <code>(modelName) =&gt; Model</code>
+            indexed by lowercased provider key. Caller entries merge on top of
+            the defaults, so you can add new keys or replace a built-in. Reach
+            for it on mock providers for tests and fixtures, tenant-specific
+            routing, local-model gateways (Ollama, vLLM via an OpenAI-compatible
+            proxy), auth wrappers, request signing, or regional pinning.
+          </p>
+          <p>
+            Switching models mid-run is just a different string from a later
+            <code>onTurnPrepared</code> — kernel resolves per turn, so routing
+            logic (cheap model for planning, expensive for synthesis) lives
+            entirely in caller code.
+          </p>
+        </div>
+        <pre><code>runAgent({
+  state: { runId, context },
+  hooks: {
+    onTurnPrepared: () =&gt; ({
+      model: <span class="s">'openai/gpt-5.5'</span>,                  <span class="c">// → openai provider</span>
+      messages,
+    }),
+  },
+  modelProviders: {
+    mock:   (name) =&gt; mockModel(name),       <span class="c">// new provider key</span>
+    openai: (name) =&gt; signedOpenAI(name),    <span class="c">// override built-in</span>
+  },
+  <span class="c">// ...</span>
+})</code></pre>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Terms</div>
+        <div class="flow">
+          <p>
+            <span class="term-plain">Agent.</span> Caller-owned product behavior
+            around an LLM loop. Kernel does not define a universal agent class.
+          </p>
+          <p>
+            <span class="term-plain">Run.</span> One durable execution of
+            <code>runAgent</code> with one <code>runId</code> and one
+            <code>AgentRunState</code>.
+          </p>
+          <p>
+            <span class="term-plain">Turn.</span> One model step: prepare input,
+            call model, record result, execute tools, complete.
+          </p>
+          <p>
+            <span class="term-plain">Session.</span> Caller concept. Caller
+            decides whether sessions exist and how runs map to them.
+          </p>
+          <p>
+            <span class="term-plain">Context.</span> Caller-owned JSON carried
+            inside run state and passed through hooks.
+          </p>
+          <p>
+            <span class="term-plain">Middleware.</span> Caller-supplied wrapper
+            around model or tool I/O for retry, cache, trace, sandbox, fixture,
+            route, or block.
+          </p>
+        </div>
+      </section>
+      </div>
+
+      <nav class="footer">
+        <a href="#" data-overview>Overview</a>
+        <a href="#docs/api" data-doc="api.md">API</a>
+        <a href="#docs/state" data-doc="state.md">State</a>
+        <a href="#docs/hooks" data-doc="hooks.md">Hooks</a>
+        <a href="#docs/middleware" data-doc="middleware.md">Middleware</a>
+        <a href="#docs/tools" data-doc="tools.md">Tools</a>
+        <a href="#docs/models" data-doc="models.md">Models</a>
+        <a href="#docs/comparison" data-doc="comparison.md">Comparison</a>
+        <a href="#docs/qna" data-doc="qna.md">Q&amp;A</a>
+      </nav>
+    </div>
+    <script>
+      const docViewer = document.querySelector("#doc-viewer");
+      const homeContent = document.querySelector("#home-content");
+      const docLinks = [...document.querySelectorAll("[data-doc]")];
+      const overviewLinks = [...document.querySelectorAll("[data-overview]")];
+      const docBySlug = Object.fromEntries(
+        docLinks.map((link) => [
+          link.getAttribute("href").replace("#docs/", ""),
+          link.dataset.doc,
+        ]),
+      );
+
+      function escapeHtml(value) {
+        return value
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      function renderInline(value) {
+        return escapeHtml(value)
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      }
+
+      function renderMarkdown(markdown) {
+        const blocks = [];
+        const lines = markdown.split(/\r?\n/);
+        let paragraph = [];
+        let list = [];
+        let code = null;
+
+        function flushParagraph() {
+          if (!paragraph.length) return;
+          blocks.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
+          paragraph = [];
+        }
+
+        function flushList() {
+          if (!list.length) return;
+          blocks.push(
+            `<ul>${list.map((item) => `<li>${renderInline(item)}</li>`).join("")}</ul>`,
+          );
+          list = [];
+        }
+
+        for (const line of lines) {
+          const fence = line.match(/^```(.*)$/);
+          if (fence) {
+            if (code) {
+              blocks.push(`<pre><code>${escapeHtml(code.lines.join("\n"))}</code></pre>`);
+              code = null;
+            } else {
+              flushParagraph();
+              flushList();
+              code = { language: fence[1], lines: [] };
+            }
+            continue;
+          }
+
+          if (code) {
+            code.lines.push(line);
+            continue;
+          }
+
+          if (!line.trim()) {
+            flushParagraph();
+            flushList();
+            continue;
+          }
+
+          const heading = line.match(/^(#{1,3})\s+(.*)$/);
+          if (heading) {
+            flushParagraph();
+            flushList();
+            const level = heading[1].length;
+            blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+            continue;
+          }
+
+          const bullet = line.match(/^-\s+(.*)$/);
+          if (bullet) {
+            flushParagraph();
+            list.push(bullet[1]);
+            continue;
+          }
+
+          paragraph.push(line.trim());
+        }
+
+        flushParagraph();
+        flushList();
+        return blocks.join("\n");
+      }
+
+      async function showDoc(slug) {
+        const doc = docBySlug[slug];
+        if (!doc) {
+          homeContent.hidden = false;
+          docViewer.classList.remove("active");
+          docViewer.innerHTML = "";
+          docLinks.forEach((link) => link.classList.remove("active"));
+          overviewLinks.forEach((link) => link.classList.add("active"));
+          return;
+        }
+
+        const response = await fetch(doc, { cache: "no-store" });
+        const markdown = await response.text();
+        homeContent.hidden = true;
+        docViewer.classList.add("active");
+        docViewer.innerHTML = `<a class="back-link" href="#">Back to overview</a>${renderMarkdown(markdown)}`;
+        docLinks.forEach((link) => {
+          link.classList.toggle(
+            "active",
+            link.getAttribute("href") === `#docs/${slug}`,
+          );
+        });
+        overviewLinks.forEach((link) => link.classList.remove("active"));
+        window.scrollTo({ top: 0, behavior: "instant" });
+      }
+
+      window.addEventListener("hashchange", () => {
+        showDoc(location.hash.replace("#docs/", ""));
+      });
+
+      showDoc(location.hash.replace("#docs/", ""));
+    </script>
+  </body>
+</html>

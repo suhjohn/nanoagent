@@ -149,7 +149,12 @@ export type AgentRunStatus =
       metadata?: JsonLike
       createdAt: string
     }
-  | { type: 'failed'; error: SerializedError; createdAt: string }
+  | {
+      type: 'failed'
+      phase: AgentPhase
+      error: SerializedError
+      createdAt: string
+    }
 
 export type ToolCallsSnapshot = {
   pending: AgentToolCall[]
@@ -278,6 +283,7 @@ export type AgentPhaseEvent =
       runId: string
       revision: number
       createdAt: string
+      phase: AgentPhase
       error: SerializedError
     }
 
@@ -978,6 +984,19 @@ function withRunning<CONTEXT extends JsonLike>(
     ...state,
     status: { type: 'running', phase }
   }
+}
+
+function recoverablePhase<CONTEXT extends JsonLike>(
+  state: AgentRunState<CONTEXT>
+): AgentPhase {
+  if (state.status.type === 'running' || state.status.type === 'paused') {
+    return state.status.phase
+  }
+  if (state.status.type === 'failed') {
+    return state.status.phase
+  }
+
+  return 'run_started'
 }
 
 function applyContext<CONTEXT extends JsonLike, VALUE>({
@@ -1960,9 +1979,10 @@ export async function* runAgent<CONTEXT extends JsonLike>(
     )
     snapshot = applyContext({ snapshot, hookResult })
     const failure = serializeError(error)
+    const phase = recoverablePhase(snapshot)
     const failedSnapshot: AgentRunState<CONTEXT> = {
       ...snapshot,
-      status: { type: 'failed', error: failure, createdAt }
+      status: { type: 'failed', phase, error: failure, createdAt }
     }
     snapshot = failedSnapshot
     return snapshotState(failedSnapshot, [
@@ -1971,6 +1991,7 @@ export async function* runAgent<CONTEXT extends JsonLike>(
         runId: snapshot.runId,
         revision: snapshot.revision,
         createdAt,
+        phase,
         error: failure
       }
     ])
@@ -1979,10 +2000,14 @@ export async function* runAgent<CONTEXT extends JsonLike>(
   try {
     await Effect.runPromise(checkNotAborted(options.signal))
 
-    if (snapshot.status.type === 'paused') {
+    if (
+      snapshot.status.type === 'paused' ||
+      snapshot.status.type === 'failed'
+    ) {
+      const phase = snapshot.status.phase
       const resumedSnapshot: AgentRunState<CONTEXT> = withRunning(
         snapshot,
-        snapshot.status.phase
+        phase
       )
       snapshot = resumedSnapshot
       yield* emitEvents(await snapshotState(resumedSnapshot, []))

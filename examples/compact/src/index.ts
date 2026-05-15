@@ -1,172 +1,141 @@
-import type { ModelMessage } from "ai";
-import {
-  type AgentHooks,
-  type AgentModelProviders,
-  type AgentStreamEvent,
-  runAgent,
-} from "@nanoagent/kernel";
-import {
-  appendContextMessages,
-  appendMessages,
-  createSession,
-  type Db,
-  getSession,
-  loadSessionContext,
-  loadState,
-  makeSaveState,
-  saveSessionContext,
-  type RunContext,
-} from "./db";
+import { openai } from "@ai-sdk/openai";
+import { generateText, type ModelMessage } from "ai";
+import { type JsonLike, runAgent, type AgentStreamEvent } from "@nanoagent/kernel";
 
-export * from "./db";
-
-type CompactDeps = {
-  compact(input: {
-    messages: ModelMessage[];
-    turnTotalTokens: number;
-  }): Promise<string>;
-  db: Db;
-  modelProviders?: AgentModelProviders;
-  streamToClient(event: AgentStreamEvent): Promise<void> | void;
+export type ChatMessage = {
+  [key: string]: JsonLike;
+  role: "system" | "user" | "assistant";
+  content: string;
 };
 
-type CompactPolicy = {
-  compactAfterTurnTokens: number;
+export type Session = {
+  context: ChatMessage[];
+  history: ChatMessage[];
+};
+
+export type CompactDeps = {
+  compactAfterTokens: number;
   keepRecentMessages: number;
+  streamToClient?: (event: AgentStreamEvent) => void;
 };
 
-const defaultPolicy = {
-  compactAfterTurnTokens: 8_000,
-  keepRecentMessages: 6,
-} satisfies CompactPolicy;
-
-async function compactContextAfterTurn(params: {
-  compact: CompactDeps["compact"];
-  db: Db;
-  policy: CompactPolicy;
-  sessionId: string;
-  turnTotalTokens: number;
-}) {
-  const context = loadSessionContext(params.db, params.sessionId);
-  if (params.turnTotalTokens < params.policy.compactAfterTurnTokens) return;
-
-  const compactAt = Math.max(
-    0,
-    context.length - params.policy.keepRecentMessages,
-  );
-  if (compactAt === 0) return;
-
-  const previous = context.slice(0, compactAt);
-  const recent = context.slice(compactAt);
-  const summary = await params.compact({
-    messages: previous,
-    turnTotalTokens: params.turnTotalTokens,
+async function compactMessages(messages: ChatMessage[]) {
+  const result = await generateText({
+    model: openai("gpt-5.4-mini"),
+    messages: [
+      {
+        role: "system",
+        content:
+          "Summarize older conversation messages for future model context. Preserve facts, decisions, user preferences, and unresolved tasks.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify(messages, null, 2),
+      },
+    ],
   });
 
-  saveSessionContext(params.db, {
-    sessionId: params.sessionId,
-    context: [
+  return result.text;
+}
+
+export async function compactContext(params: {
+  messages: ChatMessage[];
+  turnTotalTokens: number;
+  compactAfterTokens: number;
+  keepRecentMessages: number;
+}): Promise<{ compacted: boolean; messages: ChatMessage[] }> {
+  if (params.turnTotalTokens < params.compactAfterTokens) {
+    return { compacted: false, messages: params.messages };
+  }
+
+  const compactAt = params.messages.length - params.keepRecentMessages;
+  if (compactAt <= 0) {
+    return { compacted: false, messages: params.messages };
+  }
+
+  const olderMessages = params.messages.slice(0, compactAt);
+  const recentMessages = params.messages.slice(compactAt);
+  const summary = await compactMessages(olderMessages);
+
+  return {
+    compacted: true,
+    messages: [
       {
         role: "system",
         content: `Conversation summary:\n${summary}`,
-      },
-      ...recent,
+      } satisfies ChatMessage,
+      ...recentMessages,
     ],
-  });
-}
-
-export function appendUserMessage(params: {
-  content: string;
-  db: Db;
-  runId?: string;
-  sessionId: string;
-}) {
-  const message = {
-    role: "user",
-    content: params.content,
-  } satisfies ModelMessage;
-  appendMessages(params.db, {
-    sessionId: params.sessionId,
-    runId: params.runId,
-    messages: [message],
-  });
-  appendContextMessages(params.db, {
-    sessionId: params.sessionId,
-    messages: [message],
-  });
-  return message;
-}
-
-export async function runCompactAgent(params: {
-  deps: CompactDeps;
-  model?: string;
-  policy?: Partial<CompactPolicy>;
-  runId: string;
-  sessionId: string;
-  userId: string;
-}) {
-  const existing = getSession(params.deps.db, params.sessionId);
-  const session =
-    existing ??
-    createSession(params.deps.db, {
-      id: params.sessionId,
-      model: params.model ?? "openai/gpt-5.4-mini",
-      userId: params.userId,
-    });
-  const saved = loadState(params.deps.db, params.runId);
-  const state = saved ?? {
-    runId: params.runId,
-    context: {
-      model: params.model ?? session.model,
-      sessionId: params.sessionId,
-      userId: params.userId,
-    },
   };
-  const policy = { ...defaultPolicy, ...params.policy };
-  const hooks = {
-    onTurnPrepared: ({ context }) => ({
-      value: {
-        model: context.model,
-        messages: loadSessionContext(params.deps.db, context.sessionId),
-      },
-    }),
+}
 
-    onTurnCompleted: async ({ context, turn }) => {
-      const modelResult = turn.modelResult;
-      if (!modelResult) return;
-      const messages = modelResult.response.messages;
-      const turnTotalTokens =
-        modelResult.totalUsage.totalTokens ??
-        (modelResult.totalUsage.inputTokens ?? 0) +
-          (modelResult.totalUsage.outputTokens ?? 0);
+export async function runCompact(params: {
+  deps: CompactDeps;
+  runId: string;
+  session: Session;
+  prompt: string;
+}) {
+  const userMessage = { role: "user", content: params.prompt } satisfies ChatMessage;
+  params.session.history.push(userMessage);
+  params.session.context.push(userMessage);
 
-      appendMessages(params.deps.db, {
-        sessionId: context.sessionId,
-        runId: params.runId,
-        messages,
-      });
-      appendContextMessages(params.deps.db, {
-        sessionId: context.sessionId,
-        messages,
-      });
+  let compacted = false;
 
-      await compactContextAfterTurn({
-        compact: params.deps.compact,
-        db: params.deps.db,
-        policy,
-        sessionId: context.sessionId,
-        turnTotalTokens,
-      });
+  for await (const event of runAgent<{ messages: ChatMessage[] }>({
+    state: {
+      runId: params.runId,
+      context: { messages: params.session.context },
     },
-  } satisfies AgentHooks<RunContext>;
-
-  for await (const event of runAgent<RunContext>({
-    state,
-    modelProviders: params.deps.modelProviders,
-    hooks,
     maxTurns: 1,
-    saveState: makeSaveState(params.deps.db),
+    hooks: {
+      onTurnPrepared: ({ context }) => ({
+        value: {
+          model: "openai/gpt-5.4-mini",
+          messages: [
+            {
+              role: "system",
+              content: "Answer in one concise sentence.",
+            },
+            ...context.messages,
+          ],
+        },
+      }),
+      onTurnCompleted: async ({ context, turn }) => {
+        const modelResult = turn.modelResult;
+        if (!modelResult?.text) return;
+
+        const assistantMessage = {
+          role: "assistant",
+          content: modelResult.text,
+        } satisfies ChatMessage;
+
+        const turnTotalTokens =
+          modelResult.totalUsage.totalTokens ??
+          (modelResult.totalUsage.inputTokens ?? 0) +
+            (modelResult.totalUsage.outputTokens ?? 0);
+
+        const messages = [...context.messages, assistantMessage]
+        const result = await compactContext({
+          messages,
+          turnTotalTokens,
+          compactAfterTokens: params.deps.compactAfterTokens,
+          keepRecentMessages: params.deps.keepRecentMessages,
+        });
+
+        compacted = result.compacted;
+        params.session.history.push(assistantMessage);
+        params.session.context = result.messages;
+
+        return {
+          context: {
+            messages: result.messages,
+          },
+        };
+      },
+    },
   })) {
-    await params.deps.streamToClient(event);
+    params.deps.streamToClient?.(event);
   }
+
+  return { session: params.session, compacted };
 }

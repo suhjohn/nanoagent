@@ -1,141 +1,80 @@
-import { jsonSchema, tool } from "ai";
-import type { ModelMessage } from "ai";
-import type { AgentRunState, JsonLike } from "@nanoagent/kernel";
-import { approveFromSlack, startOrResume } from "./index";
+import { randomUUID } from "node:crypto";
+import { type InteractiveCli, runInteractiveCli } from "../../common-cli/src";
+import { runHumanApproval, type Context } from "./index";
 
-type Context = {
-  [key: string]: JsonLike;
-  approved: string[];
-  sessionId: string;
-  slackChannelId: string;
-  userId: string;
-};
+const baseRunId = process.env.RUN_ID ?? `approval-cli-${randomUUID()}`;
 
-const runId = process.env.RUN_ID ?? "approval-cli-run";
-const toolCallId = process.env.TOOL_CALL_ID ?? "call-charge";
-const states = new Map<string, AgentRunState<Context>>();
-const slackPosts: unknown[] = [];
-const charges: unknown[] = [];
-const prompt =
-  process.argv.slice(2).join(" ") ||
-  "Approve and run the pending ChargeCard tool call, then summarize result.";
+// In-memory store
+const states = new Map<string, { context: Context, status: any }>();
+let activeRunId: string | undefined;
 
-states.set(runId, {
-  runId,
-  revision: 1,
-  updatedAt: new Date(0).toISOString(),
-  status: { type: "running", phase: "model_completed" },
-  context: {
-    approved: [],
-    sessionId: runId,
-    slackChannelId: process.env.SLACK_CHANNEL_ID ?? "C123",
-    userId: process.env.USER_ID ?? "U123",
+await runInteractiveCli({
+  defaultPrompt: "Charge the customer card $1.00 in USD, then confirm the result.",
+  intro: "Human approval example.",
+  commands: {
+    approve: {
+      description: "Approve latest pending tool request",
+      run: async ({ cli }) => {
+        await approveLatest(cli);
+      },
+    },
   },
-  turns: [],
-  currentTurn: {
-    turnId: "turn-1",
-    turn: 1,
-    modelArgs: {
-      model: process.env.MODEL ?? "openai/gpt-5.4-mini",
-      messages: [{ role: "user", content: prompt }],
-      toolNames: ["ChargeCard"],
-    },
-    modelResult: {
-      finishReason: "tool-calls",
-      response: {
-        id: "response-1",
-        messages: [],
-        modelId: "seeded",
-        timestamp: new Date(0),
-      },
-      totalUsage: {
-        inputTokens: 0,
-        inputTokenDetails: {
-          cacheReadTokens: undefined,
-          cacheWriteTokens: undefined,
-          noCacheTokens: 0,
-        },
-        outputTokens: 0,
-        outputTokenDetails: {
-          reasoningTokens: undefined,
-          textTokens: 0,
-        },
-        totalTokens: 0,
-      },
-    },
-    toolCalls: {
-      pending: [
-        {
-          toolCallId,
-          toolName: "ChargeCard",
-          input: { amountCents: 100, currency: "usd" },
-        },
-      ],
-      inFlight: [],
-      completed: [],
-    },
+  run: async ({ input, cli }) => {
+    activeRunId = baseRunId;
+    const initialContext: Context = {
+      approvedToolCallIds: [],
+      messages: [{ role: "user", content: input }],
+    };
+    
+    const { context, status } = await runHumanApproval({
+      deps: { streamToClient: (event) => cli.event(event) },
+      runId: activeRunId,
+      context: initialContext,
+    });
+    
+    states.set(activeRunId, { context, status });
+
+    if (status?.type === "paused") {
+      cli.info("Run paused for approval. Use /approve to continue.");
+    }
   },
 });
 
-const deps = {
-  messages: {
-    append: async () => {},
-    load: async () =>
-      [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ] satisfies ModelMessage[],
-  },
-  modelProviders: {},
-  slack: {
-    postApproval: async (approval: unknown) => {
-      slackPosts.push(approval);
-    },
-  },
-  store: {
-    load: async (id: string) => states.get(id),
-    save: async ({ state }: { state: AgentRunState<Context> }) => {
-      states.set(state.runId, state);
-    },
-  },
-  tools: {
-    ChargeCard: tool({
-      description: "Charge customer card.",
-      inputSchema: jsonSchema({
-        type: "object",
-        additionalProperties: true,
-        properties: {},
-      }),
-      execute: async (input) => {
-        charges.push(input);
-        return { status: "succeeded" };
-      },
-    }),
-  },
-};
+async function approveLatest(cli: InteractiveCli) {
+  if (!activeRunId) {
+    cli.info("No active run.");
+    return;
+  }
 
-await startOrResume({
-  deps,
-  runId,
-  slackChannelId: process.env.SLACK_CHANNEL_ID ?? "C123",
-  userId: process.env.USER_ID ?? "U123",
-});
-await approveFromSlack({
-  deps,
-  runId,
-  toolCallId,
-});
+  const saved = states.get(activeRunId);
+  if (saved?.status?.type !== "paused") {
+    cli.info("No pending approval.");
+    return;
+  }
 
-console.log(
-  JSON.stringify(
-    {
-      charges,
-      finalStatus: states.get(runId)?.status,
-      slackPosts,
-    },
-    null,
-    2,
-  ),
-);
+  // Find the tool call ID that needs approval
+  // In a real app, this comes from the pause event metadata saved to DB
+  const unapprovedId = saved.context.messages
+    .flatMap(m => m.role === "assistant" && typeof m.content !== "string" ? m.content : [])
+    .filter((c: any) => c.type === "tool-call" && c.toolName === "ChargeCard")
+    .map((c: any) => c.toolCallId)
+    .find(id => !saved.context.approvedToolCallIds.includes(id));
+
+  if (!unapprovedId) {
+    cli.info("Could not find unapproved tool call.");
+    return;
+  }
+
+  // Approve it
+  saved.context.approvedToolCallIds = [...saved.context.approvedToolCallIds, unapprovedId];
+  cli.info(`Approved tool call ${unapprovedId}`);
+
+  // Resume
+  const { context, status } = await runHumanApproval({
+    deps: { streamToClient: (event) => cli.event(event) },
+    runId: activeRunId,
+    context: saved.context,
+  });
+  
+  states.set(activeRunId, { context, status });
+}

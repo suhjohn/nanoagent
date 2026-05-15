@@ -68,7 +68,11 @@ describe('plugins', () => {
   test('question tool owns prompt schema and validates input', async () => {
     const plugin = withQuestionTool<Context>({
       ask: ({ input, context }) => ({
-        answers: { [input.questions[0]?.id ?? 'missing']: context?.id ?? '' }
+        answers: {
+          [input.questions[0]?.id ?? 'missing']: {
+            answers: [context?.id ?? '']
+          }
+        }
       })
     })
     const configured = plugin(options())
@@ -93,10 +97,91 @@ describe('plugins', () => {
       }
     )
 
-    expect(output).toEqual({ answers: { choice: 'ctx' } })
-    expect(configured.tools!.request_user_input!.description).toContain(
-      'Request user input'
+    expect(output).toEqual({ answers: { choice: { answers: ['ctx'] } } })
+    expect(configured.tools!.request_user_input!.description).toBe(
+      'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.'
     )
+  })
+
+  test('question tool matches Codex normalization and policy errors', async () => {
+    const configured = withQuestionTool<Context>({
+      availableModes: ['Plan'],
+      mode: () => 'Default',
+      isRootThread: () => true,
+      ask: () => ({ answers: {} })
+    })(options())
+
+    await expect(async () => {
+      await configured.tools!.request_user_input!.execute!(
+        {
+          questions: [
+            {
+              id: 'choice',
+              header: 'Choice',
+              question: 'Pick one?',
+              options: [{ label: 'A', description: 'Choose A.' }]
+            }
+          ]
+        },
+        { toolCallId: 'call', messages: [] }
+      )
+    }).toThrow('request_user_input is unavailable in Default mode')
+
+    const rootRejected = withQuestionTool<Context>({
+      isRootThread: () => false,
+      ask: () => ({ answers: {} })
+    })(options())
+    await expect(async () => {
+      await rootRejected.tools!.request_user_input!.execute!(
+        {
+          questions: [
+            {
+              id: 'choice',
+              header: 'Choice',
+              question: 'Pick one?',
+              options: [{ label: 'A', description: 'Choose A.' }]
+            }
+          ]
+        },
+        { toolCallId: 'call', messages: [] }
+      )
+    }).toThrow('request_user_input can only be used by the root thread')
+
+    const calls: unknown[] = []
+    const normalized = withQuestionTool<Context>({
+      ask: params => {
+        calls.push(params)
+        return { answers: { choice: { answers: ['A'] } } }
+      }
+    })(options())
+    await normalized.tools!.request_user_input!.execute!(
+      {
+        questions: [
+          {
+            id: 'choice',
+            header: 'Choice',
+            question: 'Pick one?',
+            isOther: false,
+            isSecret: true,
+            options: [{ label: 'A', description: 'Choose A.' }]
+          }
+        ]
+      },
+      { toolCallId: 'call', messages: [] }
+    )
+    expect(calls[0]).toMatchObject({
+      input: {
+        questions: [
+          {
+            id: 'choice',
+            isOther: true,
+            isSecret: true,
+            options: [{ label: 'A', description: 'Choose A.' }]
+          }
+        ]
+      },
+      turnId: 'call'
+    })
   })
 
   test('plan tool rejects multiple active items', async () => {

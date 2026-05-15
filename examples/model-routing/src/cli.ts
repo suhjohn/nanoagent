@@ -1,52 +1,46 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunState, JsonLike } from "@nanoagent/kernel";
-import { runSupportAgent, startOrResumeTenantRun } from "./index";
+import type { AgentStreamEvent } from "@nanoagent/kernel";
+import { runInteractiveCli } from "../../common-cli/src";
+import {
+  type SubscriptionLevel,
+  runModelRouting,
+} from "./index";
 
-const states = new Map<string, AgentRunState<JsonLike>>();
-const prompt =
-  process.argv.slice(2).join(" ") ||
-  "Reply with one concise sentence explaining model routing.";
+await runInteractiveCli({
+  defaultPrompt: "How do I upgrade to pro?",
+  intro: "Model routing example (using actual API).",
+  run: async ({ input, cli }) => {
+    const runId = process.env.RUN_ID ?? randomUUID();
+    const userId = process.env.USER_ID ?? "user_123";
+    const subscriptionLevel = parseSubscriptionLevel(
+      process.env.SUBSCRIPTION_LEVEL,
+    );
 
-await runSupportAgent({
-  runId: process.env.SUPPORT_RUN_ID ?? randomUUID(),
-  prompt,
-  classifyPrompt: (input) => (input.length > 120 ? "hard" : "simple"),
-  streamToClient: (event) => {
-    console.log(`support:${event.type}`);
+    const deps = {
+      getUserSubscriptionLevel: async () => subscriptionLevel,
+      // By omitting modelProviders, the kernel will default to the real
+      // AI SDK providers which will use your environment's API keys.
+      streamToClient: (event: AgentStreamEvent) => cli.event(event),
+    };
+
+    const context = await runModelRouting({
+      deps,
+      prompt: input,
+      runId,
+      userId,
+    });
+
+    cli.json({
+      routeReason: context.routeReason,
+      runId,
+      selectedModel: context.selectedModel,
+      subscriptionLevel: context.subscriptionLevel,
+      userId,
+    });
   },
 });
 
-await startOrResumeTenantRun({
-  runId: process.env.TENANT_RUN_ID ?? randomUUID(),
-  tenantId: process.env.TENANT_ID ?? "tenant_pro",
-  prompt,
-  deps: {
-    classifyPrompt: (input) => (input.length > 120 ? "hard" : "simple"),
-    loadState: async (runId) => states.get(runId) as never,
-    loadTenant: async (tenantId) => ({
-      id: tenantId,
-      tier:
-        process.env.TENANT_TIER === "enterprise" ||
-        process.env.TENANT_TIER === "free"
-          ? process.env.TENANT_TIER
-          : "pro",
-    }),
-    saveState: async (runId, state) => {
-      states.set(runId, state as never);
-    },
-    streamToClient: (event) => {
-      console.log(`tenant:${event.type}`);
-    },
-    tools: {},
-  },
-});
-
-console.log(
-  JSON.stringify(
-    {
-      tenantRunsSaved: states.size,
-    },
-    null,
-    2,
-  ),
-);
+function parseSubscriptionLevel(value: string | undefined): SubscriptionLevel {
+  if (value === "pro") return "pro";
+  return "free";
+}

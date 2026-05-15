@@ -1,25 +1,25 @@
-# API
+# API Reference
 
-`runAgent` is kernel runtime entry point.
+`@nanoagent/kernel` exports one runtime function: `runAgent`.
 
-It takes one options object and returns `AsyncGenerator<AgentStreamEvent>`. Work starts when caller iterates generator.
-
-## `runAgent`
+`runAgent` advances one durable `AgentRunState` state machine. Caller supplies
+serializable state plus process-local runtime values. Kernel yields typed events
+as `AsyncGenerator<AgentStreamEvent, void, void>`.
 
 ```ts
 import { runAgent } from "@nanoagent/kernel";
 
 for await (const event of runAgent<Context>({
   state,
+  hooks,
   tools,
   modelProviders,
-  hooks,
-  maxTurns: 20,
-  saveState,
   middleware,
+  saveState,
   signal,
+  maxTurns: 20,
 })) {
-  await streamToClient(event);
+  await emit(event);
 }
 ```
 
@@ -29,9 +29,13 @@ function runAgent<Context extends JsonLike>(
 ): AsyncGenerator<AgentStreamEvent, void, void>;
 ```
 
-`Context` must be JSON-shaped because kernel commits it into durable run state.
+Iteration starts execution. Constructing generator does not run hooks, call
+model, execute tools, or save state.
 
-## `RunAgentOptions`
+## Runtime Boundary
+
+`RunAgentOptions` combines durable input with process-local runtime services.
+Persist `state`. Recreate everything else per process.
 
 ```ts
 type RunAgentOptions<Context extends JsonLike> = AgentRuntime<Context> & {
@@ -41,13 +45,7 @@ type RunAgentOptions<Context extends JsonLike> = AgentRuntime<Context> & {
   middleware?: AgentMiddlewareMap<Context>;
   signal?: AbortSignal;
 };
-```
 
-`RunAgentOptions` combines durable input (`state`) with process-local runtime values (`tools`, `modelProviders`, `hooks`, `saveState`, `middleware`, `signal`). Persist only `state`; recreate all other options per process.
-
-## Option: `state`
-
-```ts
 type AgentRuntime<Context extends JsonLike> = {
   state: AgentRunState<Context> | { context: Context; runId?: string };
   tools?: ToolSet;
@@ -55,217 +53,42 @@ type AgentRuntime<Context extends JsonLike> = {
 };
 ```
 
-Fresh run uses compact state:
+Runtime value ownership:
+
+- `state`: durable state machine input.
+- `state.context`: caller-owned durable JSON.
+- `hooks`: phase decisions and observation.
+- `tools`: process-local executable tool registry.
+- `modelProviders`: process-local provider registry.
+- `middleware`: process-local wrappers around model/tool boundaries.
+- `saveState`: commit callback for durable snapshots.
+- `signal`: process-local cancellation channel.
+
+## Option: `state`
+
+Fresh run input:
 
 ```ts
-runAgent({
-  state: {
-    runId: "run_123",
-    context: { threadId: "thread_123", model: "openai/gpt-5" },
-  },
-  // ...
-});
+type FreshAgentRunState<Context extends JsonLike> = {
+  runId?: string;
+  context: Context;
+};
 ```
 
-If `runId` is omitted, kernel generates UUID. Fresh run starts at revision `0`, status `{ type: "running", phase: "run_started" }`, empty `turns`, and no `currentTurn`.
-
-Resumed run passes full `AgentRunState<Context>`:
-
-```ts
-runAgent({
-  state: savedRunState,
-  hooks,
-  tools,
-  modelProviders,
-  maxTurns: 20,
-});
-```
-
-If resumed state is paused, kernel first transitions it back to running at same phase and snapshots that change. Resuming from `model_started` restarts model call and emits `model_restarted`. Resuming from `tool_call_completed` is allowed only when no tool calls are still in flight. In-flight tool resume fails because kernel cannot know whether external tool side effects already happened.
-
-## Option: `tools`
-
-```ts
-tools?: ToolSet;
-```
-
-`tools` is Vercel AI SDK `ToolSet`. Default is `{}`.
-
-Kernel uses tools in two different ways:
-
-- Model call receives tool definitions with `execute` stripped, so model sees callable schemas without executable functions.
-- Tool execution receives original `ToolSet`, finds `tools[toolName].execute`, and calls it for accepted tool calls.
-
-Tool `execute` receives:
-
-```ts
-execute(toolCall.input, {
-  toolCallId: toolCall.toolCallId,
-  messages,
-  abortSignal: signal,
-  experimental_context: context,
-});
-```
-
-If tool output is async iterable, kernel consumes it and stores final yielded chunk as output. If tool execution throws or rejects, kernel records `AgentToolCallResponse` with `error`; run continues through normal tool completion.
-
-## Option: `modelProviders`
-
-```ts
-type AgentModelProviders = Record<
-  string,
-  (modelName: string) => ReturnType<typeof openai>
->;
-```
-
-`modelProviders` maps provider name to Vercel AI SDK model factory. Custom providers are trimmed, lowercased, and merged over built-in providers.
-
-Model strings use:
-
-```txt
-<provider>/<model-name>
-```
-
-Examples:
-
-```txt
-openai/gpt-5
-anthropic/claude-opus-4-7
-google/gemini-3.1-pro
-```
-
-Kernel splits on first slash. Provider name is lowercased. Remainder becomes `modelName` passed to provider factory, so model names may contain slashes.
-
-Built-in provider keys include `openai`, `anthropic`, `azure`, `baseten`, `cerebras`, `cohere`, `deepinfra`, `deepseek`, `fireworks`, `google`, `gemini`, `vertex`, `google-vertex`, `groq`, `grok`, `mistral`, `perplexity`, `together`, `togetherai`, `bedrock`, `amazon-bedrock`, `vercel`, and `xai`.
-
-Invalid model strings or unsupported providers fail run with `run_failed`, unless caller abort signal caused failure.
-
-## Option: `maxTurns`
-
-```ts
-maxTurns: number;
-```
-
-`maxTurns` is checked after each completed turn. If last completed turn number is greater than or equal to `maxTurns`, kernel completes run with:
+Fresh run initialization:
 
 ```ts
 {
-  type: "completed",
-  source: "max_turns",
-  metadata: { maxTurns },
-  createdAt,
+  runId: state.runId ?? randomUUID(),
+  revision: 0,
+  status: { type: "running", phase: "run_started" },
+  context: state.context,
+  turns: [],
+  updatedAt: nowIso(),
 }
 ```
 
-`continue` control still respects `maxTurns`.
-
-## Option: `hooks`
-
-```ts
-hooks: AgentHooks<Context>;
-```
-
-Hooks are phase contracts. `onTurnPrepared` is required because caller owns model input assembly. Other hooks are optional.
-
-Hooks may return synchronously, as Promise-like values, or as Effect values:
-
-```ts
-type AgentEffectResult<A, E extends Error = Error> =
-  | MaybePromiseLike<A>
-  | Effect.Effect<A, E, never>;
-```
-
-Hook base `context` and `state` are cloned and deeply frozen before delivery. Boundary payloads are cloned where kernel needs isolation. Mutating hook args is invalid; return `context`, `value`, or `control`.
-
-## Option: `saveState`
-
-```ts
-type AgentSaveState<Context extends JsonLike> = (args: {
-  state: AgentRunState<Context>;
-  events: AgentPhaseEvent[];
-}) => AgentEffectResult<void>;
-```
-
-`saveState` runs at durable state boundaries. Kernel increments `revision`, updates `updatedAt`, patches event `revision` fields to match committed state, clones state, then calls `saveState`.
-
-`events` contains only `AgentPhaseEvent[]`. `stream_part` events are yielded live with `createdAt` and are not passed to `saveState`.
-
-Empty event arrays are valid. Kernel uses them for state-only snapshots, such as context updates from hooks that do not emit phase event.
-
-If `saveState` fails, run fails. Kernel then calls `onRunFailed`, snapshots failed state, yields `run_failed`, and rethrows original error. Abort skips this failure conversion.
-
-## Option: `middleware`
-
-```ts
-type AgentMiddlewareMap<Context extends JsonLike> = {
-  callModel?: Array<
-    AgentMiddleware<AgentCallModelArgs<Context>, AgentCallModelResult>
-  >;
-  callTool?: Array<
-    AgentMiddleware<AgentCallToolArgs<Context>, AgentToolCallResponse>
-  >;
-};
-```
-
-Middleware wraps model and tool boundaries. Arrays compose in order: first middleware wraps later middleware and terminal operation.
-
-```ts
-type AgentMiddlewareNext<Input, Output> = (input: Input) => Promise<Output>;
-
-type AgentMiddleware<Input, Output> = (args: {
-  input: Input;
-  next: AgentMiddlewareNext<Input, Output>;
-}) => AgentEffectResult<Output>;
-```
-
-Middleware may call `next` zero times, once, or many times. Return without `next` to replace operation. Call `next` with changed input to transform downstream operation. Call `next` more than once for retry or fallback policy.
-
-## Option: `signal`
-
-```ts
-signal?: AbortSignal;
-```
-
-`signal` cancels run from caller code. Kernel checks abort before run starts, at loop checkpoints, during model stream consumption, and while committing tool results.
-
-Abort throws. It does not call `onRunFailed`, does not write failed state, and does not emit `run_failed`.
-
-## JSON Types
-
-```ts
-type JsonPrimitive = string | number | boolean | null;
-
-type JsonLike =
-  | JsonPrimitive
-  | { readonly [key: string]: JsonLike }
-  | readonly JsonLike[];
-```
-
-`Context`, pause metadata, and finish metadata must be `JsonLike`. Persisted run state contains those JSON fields plus kernel-owned model and tool payloads.
-
-```ts
-type ReadonlyDeep<T> = T extends (...args: unknown[]) => unknown
-  ? T
-  : T extends readonly (infer Item)[]
-    ? readonly ReadonlyDeep<Item>[]
-    : T extends object
-      ? { readonly [Key in keyof T]: ReadonlyDeep<T[Key]> }
-      : T;
-```
-
-Hook args expose `context` and `state` as `ReadonlyDeep`. This is type-level contract plus runtime clone/freeze for normal JSON-shaped data.
-
-```ts
-type SerializedError = {
-  message: string;
-  name?: string;
-  stack?: string;
-};
-```
-
-Failed status and `run_failed` events use serialized errors because they are persisted.
-
-## State Types
+Resume input is complete `AgentRunState<Context>`. Kernel clones it before use.
 
 ```ts
 type AgentRunState<Context extends JsonLike> = {
@@ -279,11 +102,256 @@ type AgentRunState<Context extends JsonLike> = {
 };
 ```
 
-`revision` increments on each committed snapshot. `updatedAt` is ISO timestamp for latest snapshot.
+Resume behavior:
 
-`context` is caller-owned durable JSON. Kernel never interprets domain fields inside it.
+- `paused` resumes by committing same phase with `status.type = "running"`.
+- `failed` resumes by committing failed phase with `status.type = "running"`.
+- `completed` has no live phase; runtime exits without new work.
+- `model_started` resumes by re-running model call and yielding
+  `model_restarted`.
+- `tool_call_completed` resumes only when `inFlight` is empty.
+- In-flight tool calls are not resumable because external side effects are
+  ambiguous.
 
-`turns` contains completed turns. `currentTurn` contains active turn and is removed when turn completes.
+## Option: `tools`
+
+```ts
+tools?: ToolSet;
+```
+
+Default: `{}`.
+
+`tools` is Vercel AI SDK `ToolSet`. Kernel uses same object at two boundaries:
+
+1. Model call receives tool definitions with `execute` stripped. Raw JSON schemas
+   are wrapped with `jsonSchema`.
+2. Tool execution looks up `tools[toolName].execute` for accepted calls.
+
+Tool executor call shape:
+
+```ts
+execute(toolCall.input, {
+  toolCallId: toolCall.toolCallId,
+  messages,
+  abortSignal: signal,
+  experimental_context: context,
+});
+```
+
+Tool result rules:
+
+- Missing `execute` fails tool execution and records error response.
+- Thrown/rejected tool error becomes `AgentToolCallResponse` with `error`.
+- Async iterable output is consumed; final yielded chunk becomes `output`.
+- Tool errors do not fail run unless middleware throws outside response shape.
+
+## Option: `modelProviders`
+
+```ts
+type AgentModelProviders = Record<
+  string,
+  (modelName: string) => ReturnType<typeof openai>
+>;
+```
+
+Model strings use provider prefix:
+
+```txt
+<provider>/<model-name>
+```
+
+Resolution:
+
+1. Split string on first `/`.
+2. Trim/lowercase provider.
+3. Trim model name.
+4. Look up provider in merged provider registry.
+5. Call provider factory with model name.
+
+Custom providers are normalized with `trim().toLowerCase()` and override built-in
+providers by key.
+
+Built-in provider keys:
+
+```txt
+openai
+anthropic
+azure
+baseten
+cerebras
+cohere
+deepinfra
+deepseek
+fireworks
+google
+gemini
+vertex
+google-vertex
+groq
+grok
+mistral
+perplexity
+together
+togetherai
+bedrock
+amazon-bedrock
+vercel
+xai
+```
+
+Invalid model strings and unsupported providers fail run.
+
+## Option: `maxTurns`
+
+```ts
+maxTurns: number;
+```
+
+Kernel checks `maxTurns` after `turn_completed`. If last completed turn number
+is greater than or equal to `maxTurns`, run completes:
+
+```ts
+{
+  type: "completed",
+  source: "max_turns",
+  metadata: { maxTurns },
+  createdAt,
+}
+```
+
+`control: { type: "continue" }` cannot bypass `maxTurns`.
+
+## Option: `hooks`
+
+```ts
+hooks: AgentHooks<Context>;
+```
+
+Hooks are phase contracts. `onTurnPrepared` is required. All other hooks are
+optional.
+
+Hook return values may be sync, Promise-like, or Effect:
+
+```ts
+type AgentEffectResult<A, E extends Error = Error> =
+  | MaybePromiseLike<A>
+  | Effect.Effect<A, E, never>;
+```
+
+Hook args use cloned read-only state:
+
+```ts
+type BaseHookArgs<Context extends JsonLike> = {
+  context: ReadonlyDeep<Context>;
+  state: ReadonlyDeep<AgentRunState<Context>>;
+  runId: string;
+};
+```
+
+Kernel clones and deep-freezes normal JSON-shaped data before hook delivery.
+Return new `context`; do not mutate args.
+
+## Option: `saveState`
+
+```ts
+type AgentSaveState<Context extends JsonLike> = (args: {
+  state: AgentRunState<Context>;
+  events: AgentPhaseEvent[];
+}) => AgentEffectResult<void>;
+```
+
+Commit algorithm:
+
+1. Build next snapshot.
+2. Increment `revision`.
+3. Set `updatedAt`.
+4. Patch `revision` on events that carry one.
+5. Clone snapshot.
+6. Call `saveState({ state, events })`.
+7. Replace in-memory snapshot with committed state.
+8. Yield committed events.
+
+`stream_part` events are not passed to `saveState`. Empty event arrays are valid;
+kernel uses them for state-only commits, including resume and context-only hook
+updates.
+
+If `saveState` fails, kernel calls `onRunFailed`, commits failed state, yields
+`run_failed`, then rethrows original error. Abort errors skip failure conversion.
+
+## Option: `middleware`
+
+```ts
+type AgentMiddlewareMap<Context extends JsonLike> = {
+  callModel?: Array<
+    AgentMiddleware<AgentCallModelArgs<Context>, AgentCallModelResult>
+  >;
+  callTool?: Array<
+    AgentMiddleware<AgentCallToolArgs<Context>, AgentToolCallResponse>
+  >;
+};
+
+type AgentMiddlewareNext<Input, Output> = (input: Input) => Promise<Output>;
+
+type AgentMiddleware<Input, Output> = (args: {
+  input: Input;
+  next: AgentMiddlewareNext<Input, Output>;
+}) => AgentEffectResult<Output>;
+```
+
+Composition uses array order. First middleware wraps later middleware and
+terminal operation.
+
+Middleware may:
+
+- Return without `next` to replace operation.
+- Call `next` once to observe or transform operation.
+- Call `next` multiple times for retry/fallback policy.
+- Throw to fail run.
+
+## Option: `signal`
+
+```ts
+signal?: AbortSignal;
+```
+
+Abort checkpoints:
+
+- before run starts
+- each main loop iteration
+- during model stream consumption
+- before each tool result commit
+
+Abort throws. It does not call `onRunFailed`, does not commit failed state, and
+does not yield `run_failed`.
+
+## State Types
+
+```ts
+type JsonPrimitive = string | number | boolean | null;
+
+type JsonLike =
+  | JsonPrimitive
+  | { readonly [key: string]: JsonLike }
+  | readonly JsonLike[];
+
+type ReadonlyDeep<T> = T extends (...args: unknown[]) => unknown
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly ReadonlyDeep<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: ReadonlyDeep<T[Key]> }
+      : T;
+```
+
+`Context`, pause metadata, and finish metadata must be `JsonLike`.
+
+```ts
+type SerializedError = {
+  message: string;
+  name?: string;
+  stack?: string;
+};
+```
 
 ```ts
 type AgentRunStatus =
@@ -302,18 +370,15 @@ type AgentRunStatus =
       metadata?: JsonLike;
       createdAt: string;
     }
-  | { type: "failed"; error: SerializedError; createdAt: string };
-```
+  | {
+      type: "failed";
+      phase: AgentPhase;
+      error: SerializedError;
+      createdAt: string;
+    };
 
-`running` and `paused` carry live phase. Terminal statuses carry outcome directly.
-
-```ts
 type AgentCompletionSource = "caller" | "model_done" | "max_turns";
-```
 
-`caller` means hook returned `finish`. `model_done` means completed turn had no tool results and no `continue` request. `max_turns` means turn cap ended run.
-
-```ts
 type AgentPhase =
   | "run_started"
   | "turn_started"
@@ -327,7 +392,13 @@ type AgentPhase =
   | "turn_completed";
 ```
 
-Phases are resumable checkpoints inside live run.
+Status invariants:
+
+- `running.phase` and `paused.phase` identify resumable checkpoint.
+- `failed.phase` identifies recovery checkpoint.
+- `completed` is terminal and has no phase.
+- `revision` increments on every committed snapshot.
+- `updatedAt` is ISO timestamp for latest committed snapshot.
 
 ## Turn Types
 
@@ -347,36 +418,37 @@ type Turn = {
 };
 ```
 
-`turn` is one-based turn number. `turnId` is UUID.
+Turn invariants:
 
-`modelArgs` appears after `turn_prepared`. `modelResult` appears after `model_completed`.
+- `turn` is one-based.
+- `turnId` is UUID.
+- `modelArgs` exists after `turn_prepared`.
+- `modelResult` exists after `model_completed`.
+- Completed turns move from `currentTurn` to `turns`.
+- Completed turns have empty `pending` and empty `inFlight`.
 
-`toolCalls.pending` contains calls accepted for execution or still awaiting per-tool preparation. `toolCalls.inFlight` contains launched tool calls. `toolCalls.completed` contains responses from executed or skipped calls.
+Tool-call queues:
 
-Completed turns in `state.turns` have `modelArgs`, `modelResult`, empty `pending`, and empty `inFlight`.
+- `pending`: accepted/prepared calls not launched.
+- `inFlight`: launched calls awaiting result commit.
+- `completed`: executed or skipped call responses.
 
 ## Model Types
 
 ```ts
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
-  ? Omit<T, K>
-  : never;
-
 type AgentStreamTextOptions = DistributiveOmit<
   Parameters<typeof streamText<ToolSet>>[0],
   "model" | "tools" | "abortSignal"
 >;
-```
 
-`AgentStreamTextOptions` is caller-controlled subset of Vercel AI SDK `streamText` options. Kernel owns `model`, `tools`, and `abortSignal`.
-
-```ts
 type AgentTurnPreparedValue = AgentStreamTextOptions & {
   model: string;
 };
 ```
 
-`onTurnPrepared` returns `AgentTurnPreparedValue`. `model` is provider-prefixed string. Other fields pass through to `streamText`.
+`onTurnPrepared` returns `AgentTurnPreparedValue`. Kernel owns `model` resolution,
+model-visible `tools`, and `abortSignal`. Other fields pass through to
+`streamText`.
 
 ```ts
 type AgentModelArgs = AgentStreamTextOptions & {
@@ -385,12 +457,15 @@ type AgentModelArgs = AgentStreamTextOptions & {
 };
 ```
 
-`AgentModelArgs` is committed version of prepared model input. `toolNames` is derived from `Object.keys(tools)` and records tool registry visible for turn.
+`AgentModelArgs` is committed prepared input. `toolNames` is
+`Object.keys(tools)` at preparation time.
 
 ```ts
 type AgentResponse = LanguageModelResponseMetadata & {
   messages: Array<AssistantModelMessage | ToolModelMessage>;
 };
+
+type AgentRawModelResult = ReturnType<typeof streamText>;
 
 type AgentModelResult = {
   finishReason?: string;
@@ -405,13 +480,12 @@ type AgentModelResult = {
 };
 ```
 
-`AgentModelResult` is canonical durable model output. Kernel awaits and stores normalized text, reasoning, sources, warnings, provider metadata, response metadata, and usage.
+`AgentModelResult` is committed model output. Kernel awaits and stores stable
+fields from `streamText`.
 
-```ts
-type AgentRawModelResult = ReturnType<typeof streamText>;
-```
-
-`AgentRawModelResult` is un-normalized Vercel AI SDK return. It is available to `onModelCompleted` and as `rawResult` on `AgentCallModelResult`. It is not cloned or deeply frozen. Use it for SDK-shaped fields kernel does not normalize, such as `toolCalls`, `toolResults`, `steps`, and `files`.
+`AgentRawModelResult` is available to `onModelCompleted` and `callModel`
+middleware. It is not cloned or deep-frozen. Use it for SDK-shaped fields kernel
+does not normalize, such as `toolCalls`, `toolResults`, `steps`, and `files`.
 
 ## Tool Types
 
@@ -420,7 +494,7 @@ type AgentToolCall = ToolCall<string, unknown>;
 type ReadonlyAgentToolCall = ReadonlyDeep<AgentToolCall>;
 ```
 
-Tool call input is `unknown` because it comes from model/tool schema boundary. Use tool schema or middleware policy to validate domain-specific shape.
+Tool input is `unknown` because it crosses model/schema boundary.
 
 ```ts
 type AgentToolCallResponse =
@@ -440,8 +514,6 @@ type AgentToolCallResponse =
     };
 ```
 
-Tool response is success or failure union. Kernel stores thrown tool errors as `error` response instead of failing whole run.
-
 ```ts
 type AgentToolCallsStartedValue = readonly AgentToolCall[];
 
@@ -453,7 +525,8 @@ type AgentToolCallStartedValue =
     };
 ```
 
-`onToolCallsStarted` can rewrite batch. `onToolCallStarted` can rewrite one call or skip it by providing final response.
+`onToolCallsStarted` may replace batch. `onToolCallStarted` may replace one call
+or skip execution by returning final response.
 
 ## Control Types
 
@@ -477,9 +550,17 @@ type AgentContinue = {
 type AgentControl = AgentPause | AgentFinish | AgentContinue;
 ```
 
-`pause` snapshots paused status and exits generator. `finish` schedules clean run completion with source `caller`. `continue` requests another turn after current turn completes.
+Control semantics:
 
-`onStreamUpdate`, `onModelRestarted`, and `onPause` cannot return control. `onRunCompleted` ignores `finish` and `continue` because completion is already in progress, but still honors `pause`.
+- `pause`: commit paused status and exit generator.
+- `finish`: schedule clean completion with `source: "caller"`.
+- `continue`: start another turn after current turn completes.
+
+Observation-only hooks cannot return control: `onStreamUpdate`,
+`onModelRestarted`, `onPause`.
+
+`onRunCompleted` may pause. `finish` and `continue` are ignored because
+completion is already in progress.
 
 ## Hook Return Types
 
@@ -496,7 +577,15 @@ type AgentVoidHookResult<Context extends JsonLike> = void | {
 };
 ```
 
-`context` replaces run state's context. `value` supplies phase-specific output. `control` changes run flow.
+Return-field semantics:
+
+- `context`: replaces `state.context`.
+- `value`: supplies phase-specific output.
+- `control`: changes run flow.
+
+Context updates are committed immediately for hooks that run after a phase event
+already committed. For hooks that precede a phase commit, context rides with
+next phase snapshot.
 
 ## Hook Types
 
@@ -548,35 +637,25 @@ type AgentHooks<Context extends JsonLike> = {
 };
 ```
 
-Every hook receives base envelope:
-
-```ts
-type BaseHookArgs<Context extends JsonLike> = {
-  context: ReadonlyDeep<Context>;
-  state: ReadonlyDeep<AgentRunState<Context>>;
-  runId: string;
-};
-```
-
 Hook arg additions:
 
-| Type                          | Added fields                                                                                 |
-| ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `AgentRunStartedArgs`         | `createdAt`                                                                                  |
-| `AgentTurnStartedArgs`        | `createdAt`, `turn`                                                                          |
-| `AgentTurnPreparedArgs`       | `createdAt`, `turn`                                                                          |
-| `AgentModelStartedArgs`       | `args`, `createdAt`, `turn`                                                                  |
-| `AgentModelRestartedArgs`     | `createdAt`, `turn`                                                                          |
-| `AgentModelCompletedArgs`     | `args`, `createdAt`, `duration`, `result`, `rawResult`, `turn`                               |
-| `AgentStreamUpdateArgs`       | `createdAt`, `part`, `turn`                                                                  |
-| `AgentToolCallsStartedArgs`   | `createdAt`, `result`, `toolCalls`, `turn`                                                   |
-| `AgentToolCallStartedArgs`    | `createdAt`, `toolCall`, `toolCallId`, `toolName`, `input`, `turn`                           |
-| `AgentToolCallCompletedArgs`  | `createdAt`, `duration`, `toolCallId`, `toolName`, `input`, `turn`, plus `output` or `error` |
-| `AgentToolCallsCompletedArgs` | `createdAt`, `result`, `toolCalls`, `turn`                                                   |
-| `AgentTurnCompletedArgs`      | `createdAt`, `duration`, `turn`                                                              |
-| `AgentRunCompletedArgs`       | `createdAt`, `duration`, `turns`                                                             |
-| `AgentRunFailedArgs`          | `createdAt`, `error`                                                                         |
-| `AgentPauseArgs`              | `createdAt`, `phase`, `turn?`, `reason?`, `metadata?`                                        |
+| Type | Added fields |
+| --- | --- |
+| `AgentRunStartedArgs` | `createdAt` |
+| `AgentTurnStartedArgs` | `createdAt`, `turn` |
+| `AgentTurnPreparedArgs` | `createdAt`, `turn` |
+| `AgentModelStartedArgs` | `args`, `createdAt`, `turn` |
+| `AgentModelRestartedArgs` | `createdAt`, `turn` |
+| `AgentModelCompletedArgs` | `args`, `createdAt`, `duration`, `result`, `rawResult`, `turn` |
+| `AgentStreamUpdateArgs` | `createdAt`, `part`, `turn` |
+| `AgentToolCallsStartedArgs` | `createdAt`, `result`, `toolCalls`, `turn` |
+| `AgentToolCallStartedArgs` | `createdAt`, `toolCall`, `toolCallId`, `toolName`, `input`, `turn` |
+| `AgentToolCallCompletedArgs` | `createdAt`, `duration`, `toolCallId`, `toolName`, `input`, `turn`, plus `output` or `error` |
+| `AgentToolCallsCompletedArgs` | `createdAt`, `result`, `toolCalls`, `turn` |
+| `AgentTurnCompletedArgs` | `createdAt`, `duration`, `turn` |
+| `AgentRunCompletedArgs` | `createdAt`, `duration`, `turns` |
+| `AgentRunFailedArgs` | `createdAt`, `error` |
+| `AgentPauseArgs` | `createdAt`, `phase`, `turn?`, `reason?`, `metadata?` |
 
 ## Middleware Boundary Types
 
@@ -596,7 +675,8 @@ type AgentCallModelResult = {
 };
 ```
 
-`callModel` middleware wraps provider execution before `model_completed` state write. It can retry, replace the model, cache output, replace result, or filter/modify pending tool calls.
+`callModel` wraps provider execution before `model_completed` commit. Middleware
+may change model args, cache result, retry, or replace `pendingToolCalls`.
 
 ```ts
 type AgentCallToolArgs<Context extends JsonLike> = {
@@ -608,7 +688,8 @@ type AgentCallToolArgs<Context extends JsonLike> = {
 };
 ```
 
-`callTool` middleware receives accepted tool call, current context, current model messages, abort signal, and full tool registry. It returns `AgentToolCallResponse`.
+`callTool` wraps accepted tool execution. It must return
+`AgentToolCallResponse`.
 
 ## Event Types
 
@@ -623,13 +704,21 @@ type AgentStreamEvent =
       createdAt: string;
       part: TextStreamPart<ToolSet>;
     };
+
+type AgentStreamPartEvent = Extract<
+  AgentStreamEvent,
+  { type: "stream_part" }
+>;
 ```
 
-`runAgent` yields both persisted phase events and live stream parts. Persisted phase events also pass through `saveState`. `stream_part` events include `createdAt` and do not pass through `saveState`.
+Event persistence:
 
-```ts
-type AgentStreamPartEvent = Extract<AgentStreamEvent, { type: "stream_part" }>;
-```
+- `AgentPhaseEvent` is passed to `saveState` and yielded.
+- `stream_part` is yielded live after `onStreamUpdate`.
+- `stream_part` is never passed to `saveState`.
+- Events with `revision` receive committed snapshot revision.
+- `model_restarted` has no `revision` because it observes resume from existing
+  `model_started` checkpoint.
 
 ## Phase Event Types
 
@@ -717,13 +806,41 @@ type AgentPhaseEvent =
       runId: string;
       revision: number;
       createdAt: string;
+      phase: AgentPhase;
       error: SerializedError;
     };
 ```
 
-`model_restarted` has no `revision` because it is observation event for resumed `model_started`, not new persisted phase.
+`createdAt` and `updatedAt` are ISO strings. `duration` is milliseconds.
 
-`duration` is milliseconds. `createdAt` and `updatedAt` are ISO strings.
+## Phase Machine
+
+Nominal transition graph:
+
+```txt
+run_started
+  -> turn_started
+  -> turn_prepared
+  -> model_started
+  -> model_completed
+  -> tool_calls_started?      when pending tool calls exist
+  -> tool_call_started?       after batch/per-call hook filtering
+  -> tool_call_completed*     one event per executed tool result
+  -> tool_calls_completed?    when tool calls were present
+  -> turn_completed
+  -> run_started equivalent   next turn
+```
+
+Turn completion branching:
+
+1. If `turn >= maxTurns`, complete with `source: "max_turns"`.
+2. Else if hook requested `continue`, start next turn.
+3. Else if completed turn has no tool results, complete with
+   `source: "model_done"`.
+4. Else start next turn.
+
+Pause can happen from any hook that returns control. Finish can be requested
+from any control-capable hook. Abort can happen at abort checkpoints.
 
 ## Exported Types
 

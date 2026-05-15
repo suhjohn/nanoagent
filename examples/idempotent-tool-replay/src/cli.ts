@@ -1,105 +1,86 @@
-import type { AgentRunState, JsonLike } from "@nanoagent/kernel";
-import { startOrResume } from "./index";
+import { randomUUID } from "node:crypto";
+import { runInteractiveCli } from "../../common-cli/src";
+import { startOrResume, type ChargeResult, type Context } from "./index";
 
-type Context = {
-  [key: string]: JsonLike;
-  customerId: string;
-  sessionId: string;
-};
+const baseRunId = process.env.RUN_ID ?? `replay-cli-${randomUUID()}`;
+const customerId = "cust_123";
 
-const runId = process.env.RUN_ID ?? "replay-cli-run";
-const toolCallId = process.env.TOOL_CALL_ID ?? "call-charge";
-const states = new Map<string, AgentRunState<Context>>();
-const charges: unknown[] = [];
-const prompt =
-  process.argv.slice(2).join(" ") ||
-  "Resume the idempotent card charge and summarize the result.";
+await runInteractiveCli({
+  defaultPrompt: "Charge the customer card $1.00 in USD, then confirm the result.",
+  intro: "Idempotent tool replay example.",
+  run: async ({ input, cli }) => {
+    let runs = 0;
+    const runId = `${baseRunId}-${++runs}`;
+    let controller = new AbortController();
 
-states.set(runId, {
-  runId,
-  revision: 1,
-  updatedAt: new Date(0).toISOString(),
-  status: { type: "running", phase: "tool_call_completed" },
-  context: {
-    customerId: process.env.CUSTOMER_ID ?? "cust_123",
-    sessionId: runId,
-  },
-  turns: [],
-  currentTurn: {
-    turnId: "turn-1",
-    turn: 1,
-    modelArgs: {
-      model: process.env.MODEL ?? "openai/gpt-5.4-mini",
-      messages: [{ role: "user", content: prompt }],
-      toolNames: ["ChargeCard"],
-    },
-    modelResult: {
-      finishReason: "tool-calls",
-      response: {
-        id: "response-1",
-        messages: [],
-        modelId: "seeded",
-        timestamp: new Date(0),
-      },
-      totalUsage: {
-        inputTokens: 0,
-        inputTokenDetails: {
-          cacheReadTokens: undefined,
-          cacheWriteTokens: undefined,
-          noCacheTokens: 0,
-        },
-        outputTokens: 0,
-        outputTokenDetails: {
-          reasoningTokens: undefined,
-          textTokens: 0,
-        },
-        totalTokens: 0,
-      },
-    },
-    toolCalls: {
-      pending: [],
-      inFlight: [
-        {
-          toolCallId,
-          toolName: "ChargeCard",
-          input: { amountCents: 100, currency: "usd" },
-        },
-      ],
-      completed: [],
-    },
-  },
-});
+    const seenCharges = new Map<string, ChargeResult>();
+    let networkAttempts = 0;
 
-await startOrResume({
-  runId,
-  customerId: process.env.CUSTOMER_ID ?? "cust_123",
-  deps: {
-    chargeGateway: {
-      createCharge: async (params) => {
-        charges.push(params);
-        return { chargeId: "ch_123", status: "succeeded" };
+    const chargeGateway = {
+      createCharge: async (params: { idempotencyKey: string; amountCents: number }): Promise<ChargeResult> => {
+        networkAttempts++;
+        const cached = seenCharges.get(params.idempotencyKey);
+        
+        if (cached) {
+          cli.info(`[Gateway] Returning cached charge for ${params.idempotencyKey}`);
+          return cached;
+        }
+
+        cli.info(`[Gateway] Creating new charge for ${params.idempotencyKey}`);
+        const result: ChargeResult = {
+          chargeId: `ch_${seenCharges.size + 1}`,
+          status: "succeeded",
+        };
+        seenCharges.set(params.idempotencyKey, result);
+
+        // Simulate network failure ONLY on the first attempt
+        if (networkAttempts === 1) {
+          cli.info(`[Gateway] Simulating network drop after charge acceptance!`);
+          controller.abort(new Error("payment network dropped response after charge accepted"));
+        }
+        
+        return result;
       },
-    },
-    messages: {
-      load: async () => [{ role: "user", content: prompt }],
-    },
-    modelProviders: {},
-    store: {
-      load: async (id) => states.get(id),
-      save: async ({ state }) => {
-        states.set(state.runId, state);
-      },
-    },
+    };
+
+    const deps = {
+      chargeGateway,
+      streamToClient: (event: any) => cli.event(event),
+    };
+
+    const initialContext: Context = {
+      customerId,
+      messages: [{ role: "user", content: input }],
+    };
+
+    cli.info("--- ATTEMPT 1 ---");
+    let stateResult: any;
+    try {
+      stateResult = await startOrResume({
+        deps,
+        state: { runId, context: initialContext },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      cli.info(`network_response_lost attempt=1`);
+    }
+
+    if (!stateResult || stateResult.status.type !== "completed") {
+      cli.info("\n--- RESUMING AFTER FAILURE ---");
+      // Create a new controller for the resume
+      controller = new AbortController();
+      stateResult = await startOrResume({
+        deps,
+        state: stateResult!, // pass the aborted state which has the in-flight tool call
+        signal: controller.signal,
+      });
+    }
+
+    cli.json({
+      chargesCreated: seenCharges.size,
+      networkAttempts,
+      finalStatus: stateResult?.status,
+    });
   },
 });
-
-console.log(
-  JSON.stringify(
-    {
-      charges,
-      finalStatus: states.get(runId)?.status,
-    },
-    null,
-    2,
-  ),
-);

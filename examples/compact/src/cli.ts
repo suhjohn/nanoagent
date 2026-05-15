@@ -1,82 +1,48 @@
 import { randomUUID } from "node:crypto";
-import {
-  appendUserMessage,
-  createDb,
-  createSchema,
-  createSession,
-  loadMessages,
-  loadSessionContext,
-  runCompactAgent,
-} from "./index";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { runInteractiveCli } from "../../common-cli/src";
+import { runCompact, type Session } from "./index";
 
-const model = process.env.MODEL ?? "openai/gpt-5.4-mini";
-const prompt =
-  process.argv.slice(2).join(" ") ||
-  "Reply with one concise sentence explaining token-based compaction.";
-const db = createDb(process.env.SQLITE_PATH ?? "compact.sqlite");
-const sessionId = process.env.SESSION_ID ?? "compact-session";
-const runId = process.env.RUN_ID ?? randomUUID();
+const sessionPath = process.env.SESSION_PATH ?? join(tmpdir(), `nano-compact-${randomUUID()}.json`);
 
-createSchema(db);
-if (!createSessionIfMissing()) {
-  console.log(`Using existing session: ${sessionId}`);
-}
-
-appendUserMessage({
-  db,
-  runId,
-  sessionId,
-  content: prompt,
-});
-
-await runCompactAgent({
-  deps: {
-    db,
-    compact: async ({ messages, turnTotalTokens }) =>
-      [
-        `Previous context used ${turnTotalTokens} tokens on last turn.`,
-        `Summarize these ${messages.length} older messages for future turns.`,
-        JSON.stringify(messages),
-      ].join("\n"),
-    streamToClient: (event) => {
-      console.log(event.type);
-    },
-  },
-  model,
-  policy: {
-    compactAfterTurnTokens: Number(process.env.COMPACT_AFTER_TOKENS ?? 8_000),
-    keepRecentMessages: Number(process.env.KEEP_RECENT_MESSAGES ?? 6),
-  },
-  runId,
-  sessionId,
-  userId: process.env.USER_ID ?? "user_42",
-});
-
-console.log(
-  JSON.stringify(
-    {
-      contextMessages: loadSessionContext(db, sessionId).length,
-      historyMessages: loadMessages(db, sessionId).length,
-      runId,
-      sessionId,
-    },
-    null,
-    2,
-  ),
-);
-
-function createSessionIfMissing() {
-  try {
-    createSession(db, {
-      id: sessionId,
-      model,
-      userId: process.env.USER_ID ?? "user_42",
-    });
-    return true;
-  } catch (error) {
-    if (error instanceof Error && /constraint|unique/i.test(error.message)) {
-      return false;
-    }
-    throw error;
+async function loadSession(): Promise<Session> {
+  const file = Bun.file(sessionPath);
+  if (!(await file.exists())) {
+    return { context: [], history: [] };
   }
+  return (await file.json()) as Session;
 }
+
+async function saveSession(session: Session) {
+  await mkdir(dirname(sessionPath), { recursive: true });
+  await writeFile(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
+}
+
+await runInteractiveCli({
+  defaultPrompt: "Reply with one concise sentence explaining token-based compaction.",
+  intro: "Compact context example.",
+  run: async ({ input, cli }) => {
+    const session = await loadSession();
+
+    const result = await runCompact({
+      deps: {
+        compactAfterTokens: Number(process.env.COMPACT_AFTER_TOKENS ?? 8_000),
+        keepRecentMessages: Number(process.env.KEEP_RECENT_MESSAGES ?? 6),
+        streamToClient: (event) => cli.event(event),
+      },
+      runId: randomUUID(),
+      session,
+      prompt: input,
+    });
+
+    await saveSession(result.session);
+    cli.json({
+      compacted: result.compacted,
+      contextMessages: result.session.context.length,
+      fullHistoryMessages: result.session.history.length,
+      sessionPath,
+    });
+  },
+});

@@ -1,0 +1,131 @@
+{
+  "state": {
+    "runId": "codex-model-500",
+    "revision": 9,
+    "status": {
+      "type": "completed",
+      "source": "caller",
+      "reason": "reply_saved",
+      "createdAt": "2026-05-14T19:19:39.646Z"
+    },
+    "context": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Remember that the project name is Atlas"
+        },
+        {
+          "role": "user",
+          "content": "Continue after provider recovery. What project name did I give you?"
+        },
+        {
+          "role": "assistant",
+          "content": "The project name is Atlas."
+        }
+      ],
+      "failBeforeModel": false,
+      "failDuringModel": false
+    },
+    "turns": [
+      {
+        "turnId": "ffbf0799-20aa-4e52-96de-d849ff16e35f",
+        "turn": 1,
+        "modelArgs": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are testing durable recovery. Answer in one short sentence."
+            },
+            {
+              "role": "user",
+              "content": "Remember that the project name is Atlas"
+            }
+          ],
+          "model": "openai/gpt-5.5",
+          "toolNames": []
+        },
+        "modelResult": {
+          "finishReason": "stop",
+          "response": {
+            "id": "resp_01264e92f24cb284006a06204a5d44819089268275aaf385bd",
+            "timestamp": "2026-05-14T19:19:38.000Z",
+            "modelId": "gpt-5.5-2026-04-23",
+            "headers": {
+              "access-control-expose-headers": "X-Request-ID, CF-Ray, CF-Ray",
+              "alt-svc": "h3=\":443\"; ma=86400",
+              "cf-cache-status": "DYNAMIC",
+              "cf-ray": "9fbc416af9002157-SJC",
+              "connection": "keep-alive",
+              "content-type": "text/event-stream; charset=utf-8",
+              "date": "Thu, 14 May 2026 19:19:38 GMT",
+              "openai-organization": "user-gltv4gcmmvzbjf4owww7qwbx",
+              "openai-processing-ms": "574",
+              "openai-project": "proj_lWYvBx90rk9YGHwTjhCpLdBg",
+              "openai-version": "2020-10-01",
+              "server": "cloudflare",
+              "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+              "transfer-encoding": "chunked",
+              "x-content-type-options": "nosniff",
+              "x-ratelimit-limit-requests": "5000",
+              "x-ratelimit-limit-tokens": "2000000",
+              "x-ratelimit-remaining-requests": "4999",
+              "x-ratelimit-remaining-tokens": "1999808",
+              "x-ratelimit-reset-requests": "12ms",
+              "x-ratelimit-reset-tokens": "5ms",
+              "x-request-id": "req_ca47689618844b54ad9513f5a31af42e",
+              "set-cookie": "__cf_bm=iiQMLKybTST.eyuE6U758iHuGmBOI2JAcQ1kLj_c8FY-1778786377.4356241-1.0.1.1-mmP35COVQI2BKmUimiMHD9DcKcNelm_hd9daVFkNq0HpWuk3csznqgbQZwsmiMWhQmS60Va7hPz4VqpsK5pGfQ4dHDxn85HkMeZC5u4ujdkxWOB7mC1VO.HQeFqq0XLW; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Thu, 14 May 2026 19:49:38 GMT"
+            },
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "The project name is Atlas.",
+                    "providerOptions": {
+                      "openai": {
+                        "itemId": "msg_01264e92f24cb284006a06204b53a8819082f994685be3ee55",
+                        "phase": "final_answer"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "totalUsage": {
+            "inputTokens": 29,
+            "inputTokenDetails": {
+              "noCacheTokens": 29,
+              "cacheReadTokens": 0
+            },
+            "outputTokens": 10,
+            "outputTokenDetails": {
+              "textTokens": 10,
+              "reasoningTokens": 0
+            },
+            "totalTokens": 39,
+            "reasoningTokens": 0,
+            "cachedInputTokens": 0
+          },
+          "text": "The project name is Atlas.",
+          "reasoning": [],
+          "sources": [],
+          "warnings": [],
+          "providerMetadata": {
+            "openai": {
+              "responseId": "resp_01264e92f24cb284006a06204a5d44819089268275aaf385bd",
+              "serviceTier": "default"
+            }
+          }
+        },
+        "toolCalls": {
+          "pending": [],
+          "inFlight": [],
+          "completed": []
+        }
+      }
+    ],
+    "updatedAt": "2026-05-14T19:19:39.646Z"
+  }
+}

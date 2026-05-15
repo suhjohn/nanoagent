@@ -1,59 +1,38 @@
-import { randomUUID } from "node:crypto";
-import type { AgentRunState, JsonLike } from "@nanoagent/kernel";
-import type { ModelMessage } from "ai";
+import type { AgentModelProviders } from "@nanoagent/kernel";
+import { runInteractiveCli } from "../../common-cli/src";
 import { runWithFallback } from "./index";
 
-type Context = {
-  [key: string]: JsonLike;
-  sessionId: string;
-  tenant: "public" | "enterprise";
-};
+await runInteractiveCli({
+  defaultPrompt: "Reply with one concise sentence explaining model fallback retry.",
+  intro: "Fallback model retry example.",
+  run: async ({ input, cli }) => {
 
-const runId = process.env.RUN_ID ?? randomUUID();
-const prompt =
-  process.argv.slice(2).join(" ") ||
-  "Reply with one concise sentence explaining model fallback retry.";
-const states = new Map<string, AgentRunState<Context>>();
-const messages = new Map<string, ModelMessage[]>();
-
-await runWithFallback({
-  runId,
-  initialMessages: [
-    {
-      role: "user",
-      content: prompt,
-    },
-  ],
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  deps: {
-    loadState: async (id) => states.get(id),
-    model: process.env.MODEL ?? "openai/gpt-5.4-mini",
-    saveState: async (id, state) => {
-      states.set(id, state);
-    },
-    fallbackModel: process.env.FALLBACK_MODEL ?? "openai/gpt-5.4-mini",
-    messages: {
-      append: async (sessionId, next) => {
-        messages.set(sessionId, [...(messages.get(sessionId) ?? []), ...next]);
+    const failingProvider: AgentModelProviders = {
+      broken: (modelName: string) => {
+        return {
+          specificationVersion: "v3",
+          provider: "broken",
+          modelId: modelName,
+          supportedUrls: {},
+          doGenerate: async () => {
+            throw new Error("Rate limit exceeded");
+          },
+          doStream: async () => {
+            throw new Error("Rate limit exceeded");
+          },
+        } as never;
       },
-      load: async (sessionId) => messages.get(sessionId) ?? [],
-    },
-    modelProviders: {},
-    streamToClient: (event) => {
-      console.log(event.type);
-    },
-    tools: {},
+    };
+
+    await runWithFallback({
+      prompt: input,
+      deps: {
+        model: "broken/gpt-5.5",
+        fallbackModel: "openai/gpt-5.5", // Defaults to the real provider
+        modelProviders: failingProvider, // It will merge with default providers (like openai)
+        streamToClient: (event) => cli.event(event),
+      },
+    });
+
   },
 });
-
-console.log(
-  JSON.stringify(
-    {
-      messages: messages.get(runId)?.length ?? 0,
-      runId,
-      status: states.get(runId)?.status,
-    },
-    null,
-    2,
-  ),
-);

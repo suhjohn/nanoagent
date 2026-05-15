@@ -1,30 +1,24 @@
-import { jsonSchema, tool } from "ai";
-import type { ModelMessage, ToolSet } from "ai";
-import {
-  type AgentModelProviders,
-  type AgentRunState,
-  type AgentSaveState,
-  type JsonLike,
-  runAgent,
-} from "@nanoagent/kernel";
+import { jsonSchema, tool, type ModelMessage } from "ai";
+import { type JsonLike, runAgent, type AgentStreamEvent, type AgentRunState, type AgentRunStatus, type AgentModelProviders, type AgentHooks } from "@nanoagent/kernel";
 
-type Context = {
+export type ChatMessage = {
+  [key: string]: JsonLike;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | any;
+};
+
+export type Context = {
   [key: string]: JsonLike;
   customerId: string;
-  sessionId: string;
+  messages: ChatMessage[];
 };
 
-type ChargeInput = {
-  amountCents: number;
-  currency: "usd";
-};
-
-type ChargeResult = {
+export type ChargeResult = {
   chargeId: string;
   status: "succeeded";
 };
 
-type ChargeGateway = {
+export type ChargeGateway = {
   createCharge(params: {
     amountCents: number;
     currency: "usd";
@@ -33,28 +27,17 @@ type ChargeGateway = {
   }): Promise<ChargeResult>;
 };
 
-type RunStore = {
-  load(runId: string): Promise<AgentRunState<Context> | undefined>;
-  save(params: Parameters<AgentSaveState<Context>>[0]): Promise<void>;
-};
-
-type MessageStore = {
-  load(sessionId: string): Promise<ModelMessage[]>;
-};
-
-type IdempotentReplayDeps = {
+export type IdempotentReplayDeps = {
   chargeGateway: ChargeGateway;
-  messages: MessageStore;
-  modelProviders: AgentModelProviders;
-  store: RunStore;
+  modelProviders?: AgentModelProviders;
+  streamToClient?: (event: AgentStreamEvent) => void;
 };
 
-function makeTools(chargeGateway: ChargeGateway) {
+export function makeTools(chargeGateway: ChargeGateway) {
   return {
     ChargeCard: tool({
-      description:
-        "Charge customer card exactly once using tool call idempotency.",
-      inputSchema: jsonSchema<ChargeInput>({
+      description: "Charge customer card exactly once using tool call idempotency.",
+      inputSchema: jsonSchema<{ amountCents: number; currency: "usd" }>({
         type: "object",
         additionalProperties: false,
         properties: {
@@ -65,7 +48,6 @@ function makeTools(chargeGateway: ChargeGateway) {
       }),
       execute: async ({ amountCents, currency }, options) => {
         const context = options.experimental_context as Context;
-
         return chargeGateway.createCharge({
           customerId: context.customerId,
           amountCents,
@@ -74,18 +56,24 @@ function makeTools(chargeGateway: ChargeGateway) {
         });
       },
     }),
-  } satisfies ToolSet;
+  };
 }
 
-function replayIdempotentChargeCalls(
+export function replayIdempotentChargeCalls(
   state: AgentRunState<Context>,
 ): AgentRunState<Context> {
   if (state.status.type !== "running") return state;
-  if (state.status.phase !== "tool_call_completed") return state;
+  if (
+    state.status.phase !== "tool_call_started" &&
+    state.status.phase !== "tool_call_completed"
+  ) {
+    return state;
+  }
 
   const turn = state.currentTurn;
   if (!turn?.toolCalls.inFlight.length) return state;
 
+  // Only safely replay if all in-flight tools are ChargeCard
   const canReplay = turn.toolCalls.inFlight.every(
     (call) => call.toolName === "ChargeCard",
   );
@@ -108,41 +96,68 @@ function replayIdempotentChargeCalls(
   };
 }
 
-function makeSaveState(store: RunStore): AgentSaveState<Context> {
-  return ({ state, events }) => store.save({ state, events });
+function makeHooks(): AgentHooks<Context> {
+  return {
+    onTurnPrepared: ({ context, state }) => ({
+      value: {
+        model: "openai/gpt-5.4-mini",
+        messages: context.messages as unknown as ModelMessage[],
+        toolChoice: state.turns.length === 0 ? { type: "tool", toolName: "ChargeCard" } : "auto",
+      },
+    }),
+
+    onTurnCompleted: ({ context, turn }) => {
+      if (!turn.modelResult) return;
+      
+      const newMessages = [...turn.modelResult.response.messages] as unknown as ChatMessage[];
+
+      if (turn.toolCalls.completed.length > 0) {
+        newMessages.push({
+          role: "tool",
+          content: turn.toolCalls.completed.map((toolCall) => ({
+            type: "tool-result",
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName,
+            output: (toolCall.output ?? toolCall.error) as any,
+          })),
+        });
+      }
+
+      return {
+        context: {
+          ...context,
+          messages: [...context.messages, ...newMessages],
+        },
+      };
+    },
+  };
 }
 
 export async function startOrResume(params: {
-  customerId: string;
   deps: IdempotentReplayDeps;
-  runId: string;
+  state: AgentRunState<Context> | { runId: string; context: Context };
+  signal?: AbortSignal;
 }) {
-  const saved = await params.deps.store.load(params.runId);
-  const state = saved
-    ? replayIdempotentChargeCalls(saved)
-    : {
-        runId: params.runId,
-        context: {
-          customerId: params.customerId,
-          sessionId: params.runId,
-        },
-      };
+  let finalState: AgentRunState<Context> | undefined;
+
+  // Before starting, try to recover any in-flight idempotent tool calls
+  const state = "status" in params.state 
+    ? replayIdempotentChargeCalls(params.state) 
+    : params.state;
 
   for await (const event of runAgent<Context>({
     state,
     tools: makeTools(params.deps.chargeGateway),
     modelProviders: params.deps.modelProviders,
-    hooks: {
-      onTurnPrepared: async ({ context }) => ({
-        value: {
-          model: "openai/gpt-5.4-mini",
-          messages: await params.deps.messages.load(context.sessionId),
-        },
-      }),
+    hooks: makeHooks(),
+    maxTurns: 3,
+    saveState: async ({ state }) => {
+      finalState = state;
     },
-    maxTurns: 10,
-    saveState: makeSaveState(params.deps.store),
+    signal: params.signal,
   })) {
-    console.log(event.type);
+    params.deps.streamToClient?.(event);
   }
+
+  return finalState;
 }
