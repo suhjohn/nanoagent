@@ -1,25 +1,27 @@
-# Compact Transcript
+# Session Plugin CLI
 
-**Long conversations that never run out of context.**
+**The simplest end-to-end use of `withPlugins` and `sessionPlugin`.**
 
 ## What this showcases
 
-Every long conversation eventually outgrows the model context window. Kernel does not own that problem, caller code does.
+`@nanoagent/plugin` exports `sessionPlugin` — a bundle of three hooks that hold conversation history inside caller-typed `context`:
 
-This example keeps one JSON session with two arrays:
+- `onRunStarted` initializes an empty session context.
+- `onTurnPrepared` projects `context.history.items` into the model's message array.
+- `onTurnCompleted` appends the assistant response back into history.
 
-- `history`: full append-only transcript.
-- `context`: trimmed messages sent to model next turn.
+This example wires that plugin into a CLI loop and persists `state.context` to disk every time the kernel commits, so subsequent runs continue the same session.
 
 ## The pattern
 
-Each run appends the user message to both arrays, then sends `context` to `runAgent`.
+```ts
+const session = sessionPlugin({ persister })
+const options = withPlugins(baseOptions, [session])
 
-`onTurnCompleted` appends the assistant reply to full `history`, checks token usage, compacts older `context` messages when needed, and returns updated hook context.
+for await (const event of runAgent(options)) { ... }
+```
 
-If `totalUsage.totalTokens` crosses `COMPACT_AFTER_TOKENS`, older context messages are summarized with one concrete call to another model.
-
-Full `history` keeps every original message. Only `context` becomes `[summary, ...recentMessages]`.
+Per-commit persistence is the plugin's optional `persister` callback. The example's persister writes `state.context` as JSON to `SESSION_PATH`.
 
 ## Try it
 
@@ -27,17 +29,13 @@ Full `history` keeps every original message. Only `context` becomes `[summary, .
 bun run start
 ```
 
-Force compaction every turn:
+Resume a specific session:
 
 ```sh
-COMPACT_AFTER_TOKENS=1 bun run start "Remember that my favorite color is blue."
+SESSION_PATH=.session.json bun run start
 ```
 
-Default runs use a fresh temp session file. Set `SESSION_PATH` to resume a specific compact transcript:
-
-```sh
-SESSION_PATH=.compact-session.json bun run start
-```
+Default runs use a fresh temp file under `$TMPDIR`.
 
 ## Source
 
