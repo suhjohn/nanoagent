@@ -126,4 +126,57 @@ describe("runSessionAgent", () => {
     expect(saved.history.items.length).toBe(2); // exactly user + assistant
     expect(saved.nextTurnIsFirst).toBe(false);
   });
+
+  test("persister failure should emit run_failed before the iterator throws", async () => {
+    let runFailedEvent = false;
+    try {
+      await runSessionAgent({
+        runId: randomUUID(),
+        prompt: "Hi.",
+        modelProvider: makeModel(),
+        persister: async () => {
+          throw new Error("disk full");
+        },
+        onEvent: (event) => {
+          if (event.type === "run_failed") runFailedEvent = true;
+        },
+      });
+    } catch {
+      // expected: the iterator does throw, but it should emit a
+      // run_failed event first so callers iterating events can observe
+      // the failure without relying on try/catch around for-await.
+    }
+
+    expect(runFailedEvent).toBe(true);
+  });
+
+  test("persister receives full AgentRunState; example chooses to save only state.context", async () => {
+    let receivedState: any;
+    await runSessionAgent({
+      runId: "fixed-runid-for-test",
+      prompt: "Hi.",
+      modelProvider: makeModel(),
+      persister: async ({ state }) => {
+        receivedState = state;
+        await mkdir(dirname(sessionPath), { recursive: true });
+        await writeFile(sessionPath, JSON.stringify(state.context, null, 2) + "\n");
+      },
+    });
+
+    // Kernel hands the persister a complete AgentRunState envelope.
+    expect(receivedState.runId).toBe("fixed-runid-for-test");
+    expect(receivedState.revision).toBeGreaterThan(0);
+    expect(receivedState.status).toBeDefined();
+    expect(Array.isArray(receivedState.turns)).toBe(true);
+
+    // But the example wrapper writes only state.context to disk, dropping
+    // runId/revision/status/turns. So the saved file enables history
+    // rehydration, not kernel-level resume.
+    const written = JSON.parse(await readFile(sessionPath, "utf8"));
+    expect(written.runId).toBeUndefined();
+    expect(written.revision).toBeUndefined();
+    expect(written.status).toBeUndefined();
+    expect(written.turns).toBeUndefined();
+    expect(written.history?.items?.length).toBeGreaterThan(0);
+  });
 });
