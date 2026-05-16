@@ -1985,16 +1985,19 @@ export async function* runAgent<CONTEXT extends JsonLike>(
       status: { type: 'failed', phase, error: failure, createdAt }
     }
     snapshot = failedSnapshot
-    return snapshotState(failedSnapshot, [
-      {
-        type: 'run_failed',
-        runId: snapshot.runId,
-        revision: snapshot.revision,
-        createdAt,
-        phase,
-        error: failure
-      }
-    ])
+    const runFailedEvent: AgentPhaseEvent = {
+      type: 'run_failed',
+      runId: snapshot.runId,
+      revision: snapshot.revision,
+      createdAt,
+      phase,
+      error: failure
+    }
+    try {
+      return await snapshotState(failedSnapshot, [runFailedEvent])
+    } catch {
+      return [runFailedEvent]
+    }
   }
 
   try {
