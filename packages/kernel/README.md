@@ -2,14 +2,10 @@
 
 Durable run loop for agent products.
 
-Kernel owns sequencing, [phase state](../../docs/kernel/state-run.md),
-[pause/resume](../../docs/kernel/state-run.md#pause-and-resume),
-[model](../../docs/kernel/models.md) and [tool](../../docs/kernel/tools.md)
-boundaries, streaming events, commit ordering,
-[middleware](../../docs/kernel/middleware.md) composition, and
-[cancellation](../../docs/kernel/state-run.md#failure-and-cancel). Caller owns
-prompts, [memory](../../docs/kernel/state-session.md), storage, providers, auth,
-sandboxing, UI, and product policy.
+Kernel owns execution state: turn sequencing, phase commits, pause/resume,
+model calls, tool calls, stream events, middleware composition, and
+cancellation. Product code owns prompts, memory, storage, model credentials,
+tools, auth, sandboxing, UI, and policy.
 
 ```sh
 npm install @nanoagent/kernel
@@ -17,52 +13,51 @@ npm install @nanoagent/kernel
 
 ## Contract
 
-[`runAgent`](../../docs/kernel/api.md#runagent) takes caller state plus
-[phase hooks](../../docs/kernel/hooks.md). Nothing runs until caller iterates
-returned async generator.
+`runAgent` advances one durable state machine. Nothing runs until caller
+iterates returned async generator.
 
 ```ts
 runAgent({
   state, // AgentRunState | { runId?, context }
   hooks, // phase decisions
   tools, // AI SDK ToolSet
-  modelProviders, // optional provider registry
+  modelProviders, // provider registry
+  middleware, // model/tool wrappers
   saveState, // durable commit callback
-  middleware, // model/tool I/O wrappers
-  signal, // caller cancellation
+  signal, // cancellation
   maxTurns
 })
 ```
 
-Every turn follows same shape:
+Turn flow:
 
-1. `onTurnPrepared` returns exact model args.
-2. Kernel calls model and streams events.
-3. Kernel records tool calls, then runs tools.
-4. Hooks can update `context`, pause, finish, skip tool calls, or rewrite tool
-   calls.
-5. `saveState` receives revisioned `AgentRunState` plus emitted events at each
-   commit boundary.
+1. `onTurnPrepared` returns exact model input.
+2. Kernel calls model and yields `stream_part` events.
+3. Kernel commits model result and extracts tool calls.
+4. Hooks accept, rewrite, skip, pause, finish, or continue.
+5. Middleware wraps model and tool I/O.
+6. `saveState` receives revisioned `AgentRunState` plus commit events.
 
-[`AgentRunState`](../../docs/kernel/state-run.md) is durable truth. Persist it,
-load it, pass it back to `runAgent`.
+Persist `AgentRunState`, load it, pass it back to `runAgent`. Runtime values
+like `tools`, `modelProviders`, `middleware`, `saveState`, and `signal` are
+process-local and recreated per call.
 
 ## Small Run
 
-One hook supplies [model input](../../docs/kernel/models.md#per-turn-routing).
-One callback [persists state](../../docs/kernel/api.md#option-savestate).
-[Stream events](../../docs/kernel/api.md#event-types) go where product wants
-them.
+`onTurnPrepared` supplies current prompt. `onTurnCompleted` decides which model
+output enters caller memory.
 
 ```ts
 import type { ModelMessage } from 'ai'
 import {
   type AgentRunState,
   type AgentStreamEvent,
+  type JsonLike,
   runAgent
 } from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
   sessionId: string
 }
 
@@ -89,6 +84,8 @@ async function runChat(params: {
 
   for await (const event of runAgent({
     state,
+    maxTurns: 20,
+    saveState: ({ state }) => params.store.save(state),
     hooks: {
       onTurnPrepared: async ({ context }) => ({
         value: {
@@ -104,40 +101,102 @@ async function runChat(params: {
           turn.modelResult.response.messages
         )
 
-        if (turn.modelResult.finishReason === 'stop') {
-          return { control: { type: 'finish', reason: 'model_done' } }
-        }
+        return { control: { type: 'finish', reason: 'model_done' } }
       }
-    },
-    saveState: ({ state }) => params.store.save(state),
-    maxTurns: 20
+    }
   })) {
     params.emit(event)
   }
 }
 ```
 
-Kernel does not own [transcript policy](../../docs/kernel/state-session.md).
-[`onTurnPrepared`](../../docs/kernel/hooks.md#hook-list) returns literal prompt
-for current turn. `onTurnCompleted` decides which model output enters caller
-memory.
+Kernel stores completed turns, but it does not rebuild future prompts. Caller
+loads transcript, summaries, retrieved context, or prior turn output inside
+`onTurnPrepared`.
+
+## State
+
+Fresh run state can be compact:
+
+```ts
+{
+  runId: 'run_123',
+  context: {
+    sessionId: 'session_123'
+  }
+}
+```
+
+Kernel expands it into durable `AgentRunState`:
+
+```ts
+type AgentRunState<Context extends JsonLike> = {
+  runId: string
+  revision: number
+  status: AgentRunStatus
+  context: Context
+  turns: Turn[]
+  currentTurn?: Turn
+  updatedAt: string
+}
+```
+
+`revision` increments on every durable commit. `saveState.events` contains only
+events for current commit, not full history. Persist state and events in same
+transaction when ordering matters.
+
+```ts
+import { type AgentSaveState, type JsonLike } from '@nanoagent/kernel'
+
+type Context = {
+  [key: string]: JsonLike
+  sessionId: string
+}
+
+type Pg = {
+  tx<T>(fn: (tx: Pg) => Promise<T>): Promise<T>
+  query(sql: string, values: unknown[]): Promise<void>
+}
+
+function saveToPostgres(pg: Pg): AgentSaveState<Context> {
+  return ({ events, state }) =>
+    pg.tx(async tx => {
+      await tx.query(
+        `INSERT INTO agent_runs (id, revision, state)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE
+         SET revision = $2, state = $3
+         WHERE agent_runs.revision < $2`,
+        [state.runId, state.revision, state]
+      )
+
+      await tx.query(
+        `INSERT INTO agent_events (run_id, revision, event)
+         SELECT $1, $2, event
+         FROM jsonb_array_elements($3::jsonb) AS event`,
+        [state.runId, state.revision, JSON.stringify(events)]
+      )
+    })
+}
+```
 
 ## Pause
 
-Any hook can [pause](../../docs/kernel/state-run.md#pause-and-resume). Kernel
-commits paused state and exits generator. Later process loads same state,
-changes caller-owned [`context`](../../docs/kernel/hooks.md#context-updates),
-and calls `runAgent` again.
+Any hook can pause. Kernel commits paused state and exits generator. Later
+process loads same state, updates caller-owned `context` if needed, and calls
+`runAgent` again.
 
 ```ts
 import type { ModelMessage, ToolSet } from 'ai'
 import {
   type AgentHooks,
   type AgentRunState,
+  type JsonLike,
   runAgent
 } from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
   approvedToolCalls: string[]
   sessionId: string
 }
@@ -155,7 +214,7 @@ function hooks(messages: Messages): AgentHooks<Context> {
   return {
     onTurnPrepared: async ({ context }) => ({
       value: {
-        model: 'anthropic/claude-opus-4-7',
+        model: 'openai/gpt-5.5',
         messages: await messages.load(context.sessionId)
       }
     }),
@@ -218,15 +277,13 @@ async function approveToolCall(params: {
 }
 ```
 
-Approval lives in `context` because product owns policy. Kernel only preserves
-position: current phase, current turn,
-[pending, in-flight, and completed tool calls](../../docs/kernel/tools.md#lifecycle),
-and prior turns.
+Approval lives in `context` because product owns policy. Kernel preserves
+execution position: phase, current turn, pending tool calls, in-flight tool
+calls, completed tool responses, and prior turns.
 
 ## Tool Boundary
 
-[Hooks](../../docs/kernel/hooks.md) decide per-call policy.
-[Middleware](../../docs/kernel/middleware.md) wraps actual execution.
+Hooks decide policy. Middleware wraps execution.
 
 ```ts
 import type { ModelMessage, ToolSet } from 'ai'
@@ -235,10 +292,12 @@ import {
   type AgentHooks,
   type AgentMiddleware,
   type AgentToolCallResponse,
+  type JsonLike,
   runAgent
 } from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
   sessionId: string
 }
 
@@ -278,15 +337,14 @@ function hooks(messages: Messages): AgentHooks<Context> {
         }
       }
 
-      if (toolName === 'Bash') {
-        if (!hasCommand(input)) throw new Error('invalid Bash input')
+      if (toolName !== 'Bash') return
+      if (!hasCommand(input)) throw new Error('invalid Bash input')
 
-        return {
-          value: {
-            toolCallId,
-            toolName,
-            input: { command: `sandbox ${JSON.stringify(input.command)}` }
-          }
+      return {
+        value: {
+          toolCallId,
+          toolName,
+          input: { command: `sandbox ${JSON.stringify(input.command)}` }
         }
       }
     }
@@ -332,85 +390,50 @@ async function runWithTools(params: {
 }
 ```
 
-[`onToolCallStarted`](../../docs/kernel/tools.md#ontoolcallstarted-policy)
-handles phase decision: block, rewrite, pause, or continue.
-[`callTool`](../../docs/kernel/tools.md#calltool-middleware) handles I/O wrapper
-behavior: fixtures, retries, timing, audit, or sandbox execution.
+`onToolCallStarted` can continue, rewrite, skip, pause, or finish. `callTool`
+middleware can fixture, retry, time, audit, sandbox, or short-circuit execution.
 
-## Resume After Tool Crash
-
-Kernel treats
-[in-flight tool calls](../../docs/kernel/tools.md#non-idempotent-default) as
-unsafe to replay. If process dies after external side effect starts and before
-result commits, resume fails by default.
-
-Tool owner decides when replay is safe. For idempotent APIs, use stable
-`toolCallId` as idempotency key and move in-flight calls back to pending before
-[resume](../../docs/kernel/state-run.md#pause-and-resume).
-
-```ts
-import { type AgentRunState, type AgentToolCall } from '@nanoagent/kernel'
-
-type Context = {
-  customerId: string
-  sessionId: string
-}
-
-function replayChargeCalls(state: AgentRunState<Context>) {
-  if (state.status.type !== 'running') return state
-  if (state.status.phase !== 'tool_call_completed') return state
-
-  const turn = state.currentTurn
-  if (!turn?.toolCalls.inFlight.length) return state
-  if (!turn.toolCalls.inFlight.every(isChargeCall)) return state
-
-  return {
-    ...state,
-    status: { ...state.status, phase: 'tool_call_started' as const },
-    currentTurn: {
-      ...turn,
-      toolCalls: {
-        pending: turn.toolCalls.inFlight,
-        inFlight: [],
-        completed: turn.toolCalls.completed
-      }
-    }
-  }
-}
-
-function isChargeCall(call: AgentToolCall) {
-  return call.toolName === 'ChargeCard'
-}
-```
-
-Idempotency policy stays beside system with side effect. Kernel supplies enough
-state to make decision explicit. `ChargeCard` implementation passes
-`toolCallId` to payment gateway as idempotency key, then caller runs
-`runAgent({ state: replayChargeCalls(saved), ... })`.
-
-## JSON Session Recovery Example
-
-Run failure and recovery against real OpenAI model with file-backed state:
-
-```sh
-OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts fail "Remember that my project is called Atlas"
-OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts model-fail "Remember that my project is called Atlas"
-OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts reply "Continue after the failure and answer with the project name"
-bun packages/kernel/examples/json-session-recovery.ts show
-```
-
-`fail` throws before model call and writes `examples/.sessions/demo.json` with
-`status: failed` and saved phase. `model-fail` reaches `model_started`, then
-throws a fake provider 500 from `callModel` before `streamText` returns. `reply`
-appends new user message to same session, passes saved snapshot back to
-`runAgent`, and kernel resumes from failed phase. Events append to
-`examples/.sessions/demo.jsonl`.
+Tool errors become completed tool responses unless middleware throws outside
+`AgentToolCallResponse` shape.
 
 ## Model Boundary
 
-[Model choice](../../docs/kernel/models.md#per-turn-routing) is per turn.
-[Provider registry](../../docs/kernel/models.md#provider-registry) is
-caller-owned.
+Model string uses provider prefix:
+
+```txt
+<provider>/<model-name>
+```
+
+Built-in provider keys:
+
+```txt
+openai
+anthropic
+azure
+baseten
+cerebras
+cohere
+deepinfra
+deepseek
+fireworks
+google
+gemini
+vertex
+google-vertex
+groq
+grok
+mistral
+perplexity
+together
+togetherai
+bedrock
+amazon-bedrock
+vercel
+xai
+```
+
+`modelProviders` overrides or adds providers. `callModel` middleware handles
+retry, routing, tracing, caching, or output transforms around model call.
 
 ```ts
 import { createAnthropic } from '@ai-sdk/anthropic'
@@ -420,10 +443,12 @@ import {
   type AgentCallModelArgs,
   type AgentCallModelResult,
   type AgentMiddleware,
+  type JsonLike,
   runAgent
 } from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
   sessionId: string
   tenant: 'public' | 'private'
 }
@@ -488,64 +513,97 @@ async function runTenant(params: {
 }
 ```
 
-`model` selects provider prefix plus model name. `modelProviders` supplies
-provider values. [`callModel`](../../docs/kernel/middleware.md#retry)
-middleware handles retry, fallback, caching, tracing, or output transforms
-around model call.
+`onModelCompleted` receives canonical `AgentModelResult` plus `rawResult`.
+Extract SDK-shaped fields from `rawResult` there and stash needed values in
+caller context.
 
-## Persistence Boundary
+## Resume
 
-[`saveState`](../../docs/kernel/api.md#option-savestate) is commit point. Store
-state and events transactionally when durable ordering matters.
+Resume behavior:
+
+- `paused` resumes from stored phase.
+- `failed` resumes from failed phase.
+- `completed` exits without new work.
+- `model_started` reruns model call and emits `model_restarted`.
+- `tool_call_completed` resumes only when `inFlight` is empty.
+- In-flight tool calls fail resume by default because external side effects may
+  already have started.
+
+Tool owner decides when replay is safe. For idempotent APIs, use stable
+`toolCallId` as idempotency key and move in-flight calls back to pending before
+resume.
 
 ```ts
-import { type AgentSaveState } from '@nanoagent/kernel'
+import {
+  type AgentRunState,
+  type AgentToolCall,
+  type JsonLike
+} from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
+  customerId: string
   sessionId: string
 }
 
-type Pg = {
-  tx<T>(fn: (tx: Pg) => Promise<T>): Promise<T>
-  query(sql: string, values: unknown[]): Promise<void>
+function replayChargeCalls(state: AgentRunState<Context>) {
+  if (state.status.type !== 'running') return state
+  if (state.status.phase !== 'tool_call_completed') return state
+
+  const turn = state.currentTurn
+  if (!turn?.toolCalls.inFlight.length) return state
+  if (!turn.toolCalls.inFlight.every(isChargeCall)) return state
+
+  return {
+    ...state,
+    status: { ...state.status, phase: 'tool_call_started' as const },
+    currentTurn: {
+      ...turn,
+      toolCalls: {
+        pending: turn.toolCalls.inFlight,
+        inFlight: [],
+        completed: turn.toolCalls.completed
+      }
+    }
+  }
 }
 
-function saveToPostgres(pg: Pg): AgentSaveState<Context> {
-  return async ({ events, state }) => {
-    await pg.tx(async tx => {
-      await tx.query(
-        `INSERT INTO agent_runs (id, revision, state)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO UPDATE
-         SET revision = $2, state = $3
-         WHERE agent_runs.revision < $2`,
-        [state.runId, state.revision, state]
-      )
-      await tx.query(
-        `INSERT INTO agent_events (run_id, revision, event)
-         SELECT $1, $2, event
-         FROM jsonb_array_elements($3::jsonb) AS event`,
-        [state.runId, state.revision, JSON.stringify(events)]
-      )
-    })
-  }
+function isChargeCall(call: AgentToolCall) {
+  return call.toolName === 'ChargeCard'
 }
 ```
 
-Kernel never chooses database, queue, file layout,
-[compaction policy](../../docs/kernel/state-session.md#model-input-boundary), or
-event fanout. It calls `saveState` after each durable transition.
+## JSON Session Recovery Example
+
+Run failure and recovery against real OpenAI model with file-backed state:
+
+```sh
+OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts fail "Remember that my project is called Atlas"
+OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts model-fail "Remember that my project is called Atlas"
+OPENAI_API_KEY=... bun packages/kernel/examples/json-session-recovery.ts reply "Continue after the failure and answer with the project name"
+bun packages/kernel/examples/json-session-recovery.ts show
+```
+
+`fail` throws before model call and writes `examples/.sessions/demo.json` with
+`status: failed` and saved phase. `model-fail` reaches `model_started`, then
+throws fake provider failure from `callModel` before `streamText` returns.
+`reply` appends new user message, passes saved snapshot back to `runAgent`, and
+kernel resumes from failed phase. Events append to
+`examples/.sessions/demo.jsonl`.
+
+Set `MODEL` to override default `openai/gpt-5.5`.
 
 ## Cancellation
 
-[`AbortSignal`](../../docs/kernel/api.md#option-signal) means cancellation.
-Kernel throws abort reason and stops without writing failed run state.
+`AbortSignal` means caller cancellation. Kernel throws abort reason and stops
+without writing failed run state.
 
 ```ts
 import type { ToolSet } from 'ai'
-import { type AgentHooks, runAgent } from '@nanoagent/kernel'
+import { type AgentHooks, type JsonLike, runAgent } from '@nanoagent/kernel'
 
 type Context = {
+  [key: string]: JsonLike
   sessionId: string
 }
 
@@ -568,18 +626,53 @@ for await (const event of runAgent({
 Caller decides where `controller.abort(reason)` comes from: HTTP disconnect,
 button click, queue timeout, or worker shutdown.
 
+## Events
+
+`runAgent` yields `AgentStreamEvent` values. Durable phase events also go to
+`saveState.events`.
+
+Phase event types:
+
+```txt
+run_started
+turn_started
+turn_prepared
+model_started
+model_restarted
+model_completed
+tool_calls_started
+tool_call_started
+tool_call_completed
+tool_calls_completed
+turn_completed
+run_completed
+run_failed
+pause
+```
+
+`stream_part` events are live model stream parts. They are yielded, but not sent
+to `saveState.events`; final model output is committed at `model_completed`.
+
 ## API Surface
 
-Kernel exports [types](../../docs/kernel/api.md#exported-types) for state,
-events, hooks, middleware, providers, model results, tool calls, and `runAgent`.
+Primary exports:
 
-Core ownership remains small:
-
-- `AgentRunState` stores durable run position.
-- `AgentHooks` participate at phase boundaries.
-- `AgentMiddleware` wraps model and tool I/O.
-- `AgentStreamEvent` reports committed state and stream parts.
-- `AgentSaveState` persists revisions and events.
-- `runAgent` executes state machine.
+- `runAgent`
+- `AgentRunState`
+- `AgentRunStatus`
+- `Turn`
+- `AgentHooks`
+- `AgentMiddleware`
+- `AgentMiddlewareMap`
+- `AgentSaveState`
+- `AgentStreamEvent`
+- `AgentPhaseEvent`
+- `AgentModelArgs`
+- `AgentModelResult`
+- `AgentRawModelResult`
+- `AgentToolCall`
+- `AgentToolCallResponse`
+- `AgentModelProviders`
+- `JsonLike`
 
 Everything else belongs to product code.

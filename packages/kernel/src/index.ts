@@ -911,6 +911,48 @@ async function buildModelResult(
 
 type AgentEventGenerator = AsyncGenerator<AgentStreamEvent, void, void>
 
+function createAsyncQueue<T>(): AsyncIterable<T> & {
+  close: () => void
+  push: (value: T) => void
+} {
+  const values: T[] = []
+  const waiters: Array<(result: IteratorResult<T>) => void> = []
+  let closed = false
+
+  return {
+    push(value) {
+      const waiter = waiters.shift()
+      if (waiter) {
+        waiter({ done: false, value })
+        return
+      }
+      values.push(value)
+    },
+    close() {
+      closed = true
+      for (const waiter of waiters.splice(0)) {
+        waiter({ done: true, value: undefined })
+      }
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          if (values.length > 0) {
+            const value = values.shift() as T
+            return Promise.resolve({ done: false, value })
+          }
+          if (closed) {
+            return Promise.resolve({ done: true, value: undefined })
+          }
+          return new Promise<IteratorResult<T>>(resolve => {
+            waiters.push(resolve)
+          })
+        }
+      }
+    }
+  }
+}
+
 function makeBaseArgs<CONTEXT extends JsonLike>(
   state: AgentRunState<CONTEXT>
 ): BaseHookArgs<CONTEXT> {
@@ -1416,8 +1458,8 @@ export async function* runAgent<CONTEXT extends JsonLike>(
       return
     }
 
-    const streamEvents: AgentStreamPartEvent[] = []
-    const callModelResult = await Effect.runPromise(
+    const streamEvents = createAsyncQueue<AgentStreamPartEvent>()
+    const callModelResultPromise = Effect.runPromise(
       runMiddleware({
         input: {
           ...makeBaseArgs(snapshot),
@@ -1447,18 +1489,28 @@ export async function* runAgent<CONTEXT extends JsonLike>(
               catch: toError
             })
           )
-          const attemptStreamEvents: AgentStreamPartEvent[] = []
 
           for await (const part of rawResult.fullStream) {
             await Effect.runPromise(checkNotAborted(options.signal))
-            attemptStreamEvents.push({
+            const event: AgentStreamPartEvent = {
               type: 'stream_part',
               runId: snapshot.runId,
               turnId: currentTurn.turnId,
               turn: currentTurn.turn,
               createdAt: nowIso(),
               part
-            })
+            }
+            await Effect.runPromise(
+              fromAgentResult(() =>
+                hooks.onStreamUpdate?.({
+                  ...makeBaseArgs(snapshot),
+                  createdAt: event.createdAt,
+                  part: event.part,
+                  turn: cloneTurn(currentTurn)
+                })
+              )
+            )
+            streamEvents.push(event)
           }
 
           const modelResult = cloneModelResult(
@@ -1477,7 +1529,6 @@ export async function* runAgent<CONTEXT extends JsonLike>(
               : []
           const completedAt = nowIso()
 
-          streamEvents.push(...attemptStreamEvents)
           return {
             args: {
               ...input.args,
@@ -1490,22 +1541,14 @@ export async function* runAgent<CONTEXT extends JsonLike>(
           }
         }
       })
-    )
-    const completedAt = nowIso()
+    ).finally(() => streamEvents.close())
 
-    for (const event of streamEvents) {
-      await Effect.runPromise(
-        fromAgentResult(() =>
-          hooks.onStreamUpdate?.({
-            ...makeBaseArgs(snapshot),
-            createdAt: event.createdAt,
-            part: event.part,
-            turn: cloneTurn(currentTurn)
-          })
-        )
-      )
-      yield* emitEvents([event])
+    for await (const event of streamEvents) {
+      yield event
     }
+
+    const callModelResult = await callModelResultPromise
+    const completedAt = nowIso()
 
     const modelCompletedHook = await Effect.runPromise(
       fromAgentResult(() =>

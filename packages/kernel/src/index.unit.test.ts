@@ -1261,7 +1261,108 @@ describe('runAgent unit durability scenarios', () => {
     })
   })
 
-  test('onStreamUpdate receives model stream parts before caller collects them', async () => {
+  test('onStreamUpdate receives model stream parts before stream completion', async () => {
+    let releaseFinish: () => void = () => {}
+    const finishGate = new Promise<void>(resolve => {
+      releaseFinish = resolve
+    })
+    const mockModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          async start(controller) {
+            controller.enqueue({ type: 'text-start', id: 'text-1' })
+            controller.enqueue({ type: 'text-delta', id: 'text-1', delta: 'ok' })
+            await finishGate
+            controller.enqueue({ type: 'text-end', id: 'text-1' })
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: {
+                inputTokens: {
+                  total: 1,
+                  noCache: 1,
+                  cacheRead: undefined,
+                  cacheWrite: undefined
+                },
+                outputTokens: {
+                  total: 1,
+                  text: 1,
+                  reasoning: undefined
+                }
+              }
+            })
+            controller.close()
+          }
+        })
+      })
+    })
+    const order: string[] = []
+    const createdAtValues: string[] = []
+
+    const events = runAgent({
+      state: { context: baseContext() },
+      modelProviders: { test: () => mockModel as never },
+      maxTurns: 1,
+      hooks: {
+        onTurnPrepared: () => ({
+          value: {
+            model: 'test/model',
+            messages: [{ role: 'user', content: 'say ok' }]
+          }
+        }),
+        onStreamUpdate: ({ createdAt, part }) => {
+          if (part.type === 'text-delta') {
+            order.push(`hook:${part.text}`)
+            createdAtValues.push(createdAt)
+          }
+        }
+      }
+    })
+
+    const iterator = events[Symbol.asyncIterator]()
+    const firstDelta = (async () => {
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) {
+          return undefined
+        }
+        const event = next.value
+        if (event.type === 'stream_part' && event.part.type === 'text-delta') {
+          order.push(`yield:${event.part.text}`)
+          createdAtValues.push(event.createdAt)
+          return event
+        }
+      }
+    })()
+
+    expect(
+      await Promise.race([
+        firstDelta.then(event => event !== undefined),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 25))
+      ])
+    ).toBe(true)
+
+    releaseFinish()
+    const deltaEvent = await firstDelta
+    expect(deltaEvent?.part).toMatchObject({ type: 'text-delta', text: 'ok' })
+
+    const rest = []
+    while (true) {
+      const next = await iterator.next()
+      if (next.done) {
+        break
+      }
+      rest.push(next.value)
+    }
+
+    expect(order).toEqual(['hook:ok', 'yield:ok'])
+    expect(rest.some(event => event.type === 'run_completed')).toBe(true)
+    expect(createdAtValues).toHaveLength(2)
+    expect(createdAtValues[0]).toBe(createdAtValues[1])
+    expect(Date.parse(createdAtValues[0] ?? '')).not.toBeNaN()
+  })
+
+  test('onStreamUpdate timestamp matches yielded stream event', async () => {
     const mockModel = new MockLanguageModelV3({
       doStream: async () => ({
         stream: simulateReadableStream({
