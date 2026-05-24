@@ -185,6 +185,8 @@ deepseek
 fireworks
 google
 gemini
+google-interactions
+gemini-interactions
 vertex
 google-vertex
 groq
@@ -198,6 +200,10 @@ amazon-bedrock
 vercel
 xai
 ```
+
+`google` and `gemini` use Google provider `generateContent`. `google-interactions`
+and `gemini-interactions` use Google provider `google.interactions(...)` for
+Gemini Interactions API models.
 
 Invalid model strings and unsupported providers fail run.
 

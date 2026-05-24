@@ -26,7 +26,9 @@ Provider segment selects entry in `modelProviders`. Kernel trims and lowercases 
 
 `modelProviders` is caller-owned registry of provider factories.
 
-Kernel default provider keys are `openai`, `anthropic`, `azure`, `baseten`, `cerebras`, `cohere`, `deepinfra`, `deepseek`, `fireworks`, `google`, `gemini`, `vertex`, `google-vertex`, `groq`, `grok`, `mistral`, `perplexity`, `together`, `togetherai`, `bedrock`, `amazon-bedrock`, `vercel`, and `xai`.
+Kernel default provider keys are `openai`, `anthropic`, `azure`, `baseten`, `cerebras`, `cohere`, `deepinfra`, `deepseek`, `fireworks`, `google`, `gemini`, `google-interactions`, `gemini-interactions`, `vertex`, `google-vertex`, `groq`, `grok`, `mistral`, `perplexity`, `together`, `togetherai`, `bedrock`, `amazon-bedrock`, `vercel`, and `xai`.
+
+`google` and `gemini` use Google provider `generateContent`. `google-interactions` and `gemini-interactions` use Google provider `google.interactions(...)` for Gemini Interactions API models.
 
 Custom entries supplied as `modelProviders` are normalized by provider key before merging over defaults. Keys are trimmed, lowercased, and empty keys are ignored. Use stable lowercase keys in docs and tests so selected model strings match persisted state.
 

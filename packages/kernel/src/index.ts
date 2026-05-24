@@ -82,6 +82,9 @@ export type AgentStreamTextOptions = DistributiveOmit<
   Parameters<typeof streamText<ToolSet>>[0],
   'model' | 'tools' | 'abortSignal'
 >
+export type AgentLanguageModel = Parameters<
+  typeof streamText<ToolSet>
+>[0]['model']
 
 export type AgentModelArgs = AgentStreamTextOptions & {
   model: string
@@ -338,7 +341,7 @@ export type AgentToolCallStartedValue =
 
 export type AgentModelProviders = Record<
   string,
-  (modelName: string) => ReturnType<typeof openai>
+  (modelName: string) => AgentLanguageModel
 >
 
 export type AgentTurnPreparedValue = AgentStreamTextOptions & {
@@ -617,6 +620,8 @@ const DEFAULT_MODEL_PROVIDERS = {
   fireworks,
   google,
   gemini: google,
+  'google-interactions': google.interactions,
+  'gemini-interactions': google.interactions,
   vertex,
   'google-vertex': vertex,
   groq,
