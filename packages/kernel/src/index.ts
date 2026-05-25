@@ -1821,26 +1821,6 @@ export async function* runAgent<CONTEXT extends JsonLike>(
         }
       }
 
-      const hookResult = await Effect.runPromise(
-        fromAgentResult(() =>
-          hooks.onToolCallCompleted?.({
-            ...makeBaseArgs(snapshot),
-            createdAt: completedAt,
-            duration,
-            toolCallId: response.toolCallId,
-            toolName: response.toolName,
-            input: response.input,
-            turn: cloneTurn(turnAfterResponse),
-            ...responseResult
-          })
-        )
-      )
-      const hook = await applyHookResult(hookResult)
-      if (hook.events) {
-        yield* emitEvents(hook.events)
-        return
-      }
-
       const completedSnapshot: AgentRunState<CONTEXT> = {
         ...snapshot,
         status: { type: 'running', phase: 'tool_call_completed' },
@@ -1865,6 +1845,26 @@ export async function* runAgent<CONTEXT extends JsonLike>(
       yield* emitEvents(
         await snapshotState(completedSnapshot, [completionEvent])
       )
+
+      const hookResult = await Effect.runPromise(
+        fromAgentResult(() =>
+          hooks.onToolCallCompleted?.({
+            ...makeBaseArgs(snapshot),
+            createdAt: completedAt,
+            duration,
+            toolCallId: response.toolCallId,
+            toolName: response.toolName,
+            input: response.input,
+            turn: cloneTurn(turnAfterResponse),
+            ...responseResult
+          })
+        )
+      )
+      const hook = await applyHookResult(hookResult)
+      if (hook.events) {
+        yield* emitEvents(hook.events)
+        return
+      }
     }
   }
 

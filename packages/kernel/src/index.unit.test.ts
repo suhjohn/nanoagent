@@ -1076,6 +1076,7 @@ describe('runAgent unit durability scenarios', () => {
 
   test('finish emitted mid-tool-batch from onToolCallCompleted ends the run', async () => {
     const log: string[] = []
+    let hookCompletedCount = -1
     const recorder = makeSnapshotRecorder<UnitContext>()
     await collect(
       runAgent({
@@ -1085,10 +1086,13 @@ describe('runAgent unit durability scenarios', () => {
           onTurnPrepared: () => {
             throw new Error('should not prepare a fresh turn')
           },
-          onToolCallCompleted: ({ toolName }) =>
-            toolName === 'A'
+          onToolCallCompleted: ({ state, toolName }) => {
+            hookCompletedCount =
+              state.currentTurn?.toolCalls.completed.length ?? -1
+            return toolName === 'A'
               ? { control: { type: 'finish', reason: 'first_tool_done' } }
               : undefined
+          }
         },
         ...mkRuntime(
           modelCompletedSnapshot({
@@ -1105,6 +1109,18 @@ describe('runAgent unit durability scenarios', () => {
       source: 'caller',
       reason: 'first_tool_done'
     })
+    expect(hookCompletedCount).toBe(1)
+    expect(completedSnapshot?.currentTurn?.toolCalls.completed).toHaveLength(1)
+    expect(completedSnapshot?.currentTurn?.toolCalls.completed[0]).toMatchObject(
+      {
+        toolCallId: 'call-a',
+        toolName: 'A',
+        output: 'a-output'
+      }
+    )
+    expect(recorder.events.map(event => event.type)).toContain(
+      'tool_call_completed'
+    )
     expect(recorder.events.map(event => event.type)).toContain('run_completed')
     expect(recorder.events.map(event => event.type)).not.toContain(
       'turn_completed'
