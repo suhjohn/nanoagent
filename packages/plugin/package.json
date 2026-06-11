@@ -1,6 +1,6 @@
 {
   "name": "@nanoagent/plugin",
-  "version": "0.0.0",
+  "version": "0.1.4",
   "type": "module",
   "packageManager": "bun@1.3.13",
   "publishConfig": {
@@ -20,6 +20,10 @@
     "./plugins/session": {
       "types": "./dist/plugins/session.d.ts",
       "import": "./dist/plugins/session.js"
+    },
+    "./plugins/skills": {
+      "types": "./dist/plugins/skills.d.ts",
+      "import": "./dist/plugins/skills.js"
     }
   },
   "files": [
@@ -38,7 +42,7 @@
     "effect": "^3.21.2"
   },
   "peerDependencies": {
-    "@nanoagent/kernel": "0.0.0"
+    "@nanoagent/kernel": "0.1.4"
   },
   "devDependencies": {
     "@nanoagent/kernel": "file:../kernel",

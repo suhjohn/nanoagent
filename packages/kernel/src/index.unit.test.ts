@@ -1111,13 +1111,13 @@ describe('runAgent unit durability scenarios', () => {
     })
     expect(hookCompletedCount).toBe(1)
     expect(completedSnapshot?.currentTurn?.toolCalls.completed).toHaveLength(1)
-    expect(completedSnapshot?.currentTurn?.toolCalls.completed[0]).toMatchObject(
-      {
-        toolCallId: 'call-a',
-        toolName: 'A',
-        output: 'a-output'
-      }
-    )
+    expect(
+      completedSnapshot?.currentTurn?.toolCalls.completed[0]
+    ).toMatchObject({
+      toolCallId: 'call-a',
+      toolName: 'A',
+      output: 'a-output'
+    })
     expect(recorder.events.map(event => event.type)).toContain(
       'tool_call_completed'
     )
@@ -1287,7 +1287,11 @@ describe('runAgent unit durability scenarios', () => {
         stream: new ReadableStream({
           async start(controller) {
             controller.enqueue({ type: 'text-start', id: 'text-1' })
-            controller.enqueue({ type: 'text-delta', id: 'text-1', delta: 'ok' })
+            controller.enqueue({
+              type: 'text-delta',
+              id: 'text-1',
+              delta: 'ok'
+            })
             await finishGate
             controller.enqueue({ type: 'text-end', id: 'text-1' })
             controller.enqueue({

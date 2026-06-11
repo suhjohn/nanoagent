@@ -42,6 +42,10 @@ type HookResult = {
   control?: unknown
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function isHookResult(value: unknown): value is HookResult {
   return typeof value === 'object' && value !== null
 }
@@ -60,6 +64,57 @@ function hasContext(
 
 function hasValue(value: unknown): value is HookResult & { value: unknown } {
   return isHookResult(value) && value.value !== undefined
+}
+
+function mergeContext(current: unknown, patch: JsonLike): JsonLike {
+  if (Array.isArray(patch)) {
+    return patch
+  }
+  if (isRecord(current) && isRecord(patch)) {
+    return { ...current, ...patch } as JsonLike
+  }
+  return patch
+}
+
+function turnWithModelArgs(turn: unknown, value: unknown) {
+  if (!isRecord(turn) || !isRecord(value) || !('model' in value)) {
+    return turn
+  }
+
+  const currentModelArgs = isRecord(turn.modelArgs) ? turn.modelArgs : {}
+  const toolNames = Array.isArray(currentModelArgs.toolNames)
+    ? currentModelArgs.toolNames
+    : []
+
+  return {
+    ...turn,
+    modelArgs: {
+      ...value,
+      toolNames
+    }
+  }
+}
+
+function argsWithHookResult(args: unknown, result: unknown) {
+  if (!isHookResult(result) || !isRecord(args)) {
+    return args
+  }
+
+  let nextArgs = args
+  if (hasContext(result)) {
+    nextArgs = {
+      ...nextArgs,
+      context: mergeContext(nextArgs.context, result.context)
+    }
+  }
+  if (hasValue(result)) {
+    nextArgs = {
+      ...nextArgs,
+      turn: turnWithModelArgs(nextArgs.turn, result.value)
+    }
+  }
+
+  return nextArgs
 }
 
 function mergeHookResults(first: unknown, second: unknown) {
@@ -101,20 +156,10 @@ function chainHook<HOOK extends (args: never) => unknown>(
         return firstResult
       }
 
-      // Merge context: Context mutations apply immediately for the next hook
-      let nextArgs = args
-      if (hasContext(firstResult)) {
-        const currentContext = (args as any).context
-        const newContext = Array.isArray(firstResult.context)
-          ? firstResult.context
-          : typeof firstResult.context === 'object' && firstResult.context !== null
-            ? { ...(currentContext ?? {}), ...(firstResult.context as any) }
-            : firstResult.context
-
-        nextArgs = (typeof args === 'object' && args !== null
-          ? { ...(args as any), context: newContext }
-          : args) as Parameters<HOOK>[0]
-      }
+      const nextArgs = argsWithHookResult(
+        args,
+        firstResult
+      ) as Parameters<HOOK>[0]
 
       const secondResultRaw = second(nextArgs)
       const secondResult = yield* fromAgentResult(() => secondResultRaw as any)
@@ -228,3 +273,4 @@ export function withPlugins<CONTEXT extends JsonLike>(
 }
 
 export * from './plugins/session'
+export * from './plugins/skills'

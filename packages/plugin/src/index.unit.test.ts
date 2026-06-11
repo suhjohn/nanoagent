@@ -5,6 +5,7 @@ import type {
   AgentMiddleware,
   AgentToolCallResponse,
   AgentTurnCompletedArgs,
+  AgentTurnPreparedArgs,
   RunAgentOptions
 } from '@nanoagent/kernel'
 import { withPlugins } from './index'
@@ -52,6 +53,45 @@ function turnCompletedArgs(): AgentTurnCompletedArgs<Context> {
         phase: 'turn_completed'
       },
       turns: [],
+      updatedAt: 'now'
+    },
+    turn: {
+      turnId: 'turn',
+      turn: 1,
+      toolCalls: {
+        pending: [],
+        inFlight: [],
+        completed: []
+      }
+    }
+  }
+}
+
+function turnPreparedArgs(): AgentTurnPreparedArgs<Context> {
+  return {
+    context: { count: 0 },
+    createdAt: 'now',
+    runId: 'run',
+    state: {
+      context: {
+        count: 0
+      },
+      runId: 'run',
+      revision: 0,
+      status: {
+        type: 'running',
+        phase: 'turn_started'
+      },
+      turns: [],
+      currentTurn: {
+        turnId: 'turn',
+        turn: 1,
+        toolCalls: {
+          pending: [],
+          inFlight: [],
+          completed: []
+        }
+      },
       updatedAt: 'now'
     },
     turn: {
@@ -139,6 +179,62 @@ describe('withPlugins', () => {
     expect(seen).toEqual([1])
     expect(result).toEqual({
       context: { count: 2, other: 'kept', yetAnother: 'added' }
+    })
+  })
+
+  test('chains onTurnPrepared as message reducers', async () => {
+    const seen: number[] = []
+    const options = withPlugins(baseOptions(), [
+      {
+        hooks: {
+          onTurnPrepared: async ({ turn }) => {
+            const messages = turn.modelArgs?.messages ?? []
+            seen.push(messages.length)
+            return {
+              value: {
+                model: turn.modelArgs?.model ?? 'test/model',
+                messages: [
+                  ...messages,
+                  { role: 'user' as const, content: 'first' }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        hooks: {
+          onTurnPrepared: async ({ turn }) => {
+            const messages = turn.modelArgs?.messages ?? []
+            seen.push(messages.length)
+            return {
+              value: {
+                model: turn.modelArgs?.model ?? 'test/model',
+                messages: [
+                  ...messages,
+                  { role: 'user' as const, content: 'second' }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ])
+
+    const rawResult = options.hooks.onTurnPrepared(turnPreparedArgs())
+    const result = await (Effect.isEffect(rawResult)
+      ? Effect.runPromise(rawResult)
+      : rawResult)
+
+    expect(seen).toEqual([0, 1])
+    expect(result).toEqual({
+      value: {
+        model: 'test/model',
+        messages: [
+          { role: 'user', content: 'first' },
+          { role: 'user', content: 'second' }
+        ]
+      }
     })
   })
 
