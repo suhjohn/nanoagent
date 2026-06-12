@@ -1,6 +1,6 @@
 {
   "name": "@nanoagent/plugin",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "packageManager": "bun@1.3.13",
   "publishConfig": {
@@ -42,7 +42,7 @@
     "effect": "^3.21.2"
   },
   "peerDependencies": {
-    "@nanoagent/kernel": "0.1.4"
+    "@nanoagent/kernel": "0.1.5"
   },
   "devDependencies": {
     "@nanoagent/kernel": "file:../kernel",

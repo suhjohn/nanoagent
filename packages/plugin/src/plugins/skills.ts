@@ -53,6 +53,13 @@ export type SkillsPluginOptions<CONTEXT extends JsonLike> =
   }
 
 type ScalarMap = Record<string, string>
+type PluginTools<CONTEXT extends JsonLike> = NonNullable<
+  AgentPlugin<CONTEXT>['tools']
+>
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 function isNotFound(error: unknown) {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
@@ -324,15 +331,81 @@ function skillCatalogMessage(skills: readonly SkillMetadata[]) {
     'system',
     [
       '## Skills',
-      'Skills are local instruction files. Use listed skill when task matches description or user names it explicitly.',
+      'A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and file path.',
       '',
       '### Available skills',
       entries,
       '',
-      '### Usage',
-      'When applying skill, follow its SKILL.md instructions exactly. Explicit `$name` mentions select matching skill body for current turn.'
+      '### How to use skills',
+      '- Discovery: The list above is the skills available in this session (name + description + file path).',
+      '- Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill description shown above, use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.',
+      '- Missing/blocked: If a named skill is not in the list or its path cannot be read, say so briefly and continue with the best fallback.',
+      '- How to use a skill: after deciding to use a skill, read its `SKILL.md` completely before taking task actions. Use `readSkill` with the listed name or path unless the skill body was already injected for an explicit `$SkillName` mention.',
+      '- Context hygiene: read only referenced files needed for the task.'
     ].join('\n')
   )
+}
+
+async function readSelectedSkill<CONTEXT extends JsonLike>(
+  options: SkillsPluginOptions<CONTEXT>,
+  input: unknown
+) {
+  if (!isRecord(input)) {
+    throw new Error('readSkill input must be an object.')
+  }
+
+  const name = typeof input.name === 'string' ? input.name : undefined
+  const rawPath = typeof input.path === 'string' ? input.path : undefined
+  if (!name && !rawPath) {
+    throw new Error('readSkill requires name or path.')
+  }
+
+  const index = await loadSkills(options)
+  const skills = index.skills.filter(skill => skill.allowImplicitInvocation)
+  const path = rawPath ? resolve(mentionPath(rawPath)) : undefined
+  const matches = path
+    ? skills.filter(skill => skill.path === path)
+    : skills.filter(skill => skill.name === name)
+
+  if (!matches.length) {
+    throw new Error('Skill is not available for implicit invocation.')
+  }
+  if (matches.length > 1) {
+    throw new Error('Skill name is ambiguous. Call readSkill with path.')
+  }
+
+  const skill = matches[0]!
+  return {
+    name: skill.name,
+    path: skill.path,
+    contents: await readFile(skill.path, 'utf8')
+  }
+}
+
+function skillTools<CONTEXT extends JsonLike>(
+  options: SkillsPluginOptions<CONTEXT>
+): PluginTools<CONTEXT> {
+  return {
+    readSkill: {
+      description:
+        'Read complete SKILL.md instructions for a skill listed in the skills catalog. Call this after deciding a skill matches the task, before applying it.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Skill name from the skills catalog.'
+          },
+          path: {
+            type: 'string',
+            description: 'Exact skill file path from the skills catalog.'
+          }
+        }
+      },
+      execute: (input: unknown) => readSelectedSkill(options, input)
+    } as unknown as PluginTools<CONTEXT>[string]
+  }
 }
 
 function insertBeforeLastUser(
@@ -397,10 +470,11 @@ async function applySkillsToValue<CONTEXT extends JsonLike>(
 }
 
 export function skillsPlugin<CONTEXT extends JsonLike>(
-  options: SkillsPluginOptions<CONTEXT>
+  options: SkillsPluginOptions<CONTEXT> = {}
 ): AgentPlugin<CONTEXT> {
   return {
     name: 'skills',
+    tools: skillTools(options),
     hooks: {
       onTurnPrepared: async args => {
         const value = await applySkillsToValue(options, args)

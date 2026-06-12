@@ -208,6 +208,46 @@ describe('skillsPlugin', () => {
     expect(messages[2]).toEqual({ role: 'user', content: 'please use $alpha' })
   })
 
+  test('exposes implicit skill bodies through readSkill by default', async () => {
+    const root = await tempRoot()
+    const skillPath = await writeSkill(
+      root,
+      'alpha',
+      [
+        '---',
+        'name: alpha',
+        'description: Alpha skill',
+        '---',
+        '',
+        'Use alpha.'
+      ].join('\n')
+    )
+    const options = withPlugins(
+      baseOptions([{ role: 'user', content: 'please do alpha work' }]),
+      [skillsPlugin({ roots: [root] })]
+    )
+
+    const result = await prepareTurn(options)
+    const messages = result?.value?.messages ?? []
+
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.role).toBe('system')
+    expect(messages[0]?.content).toContain(
+      `- alpha: Alpha skill (file: ${skillPath})`
+    )
+    expect(messages[1]).toEqual({
+      role: 'user',
+      content: 'please do alpha work'
+    })
+    await expect(
+      options.tools?.readSkill?.execute?.({ name: 'alpha' }, {} as never)
+    ).resolves.toEqual({
+      name: 'alpha',
+      path: skillPath,
+      contents: '---\nname: alpha\ndescription: Alpha skill\n---\n\nUse alpha.'
+    })
+  })
+
   test('keeps explicit skill selectable when implicit invocation is disabled', async () => {
     const root = await tempRoot()
     await writeSkill(
@@ -273,5 +313,8 @@ describe('skillsPlugin', () => {
     expect(messages).toHaveLength(2)
     expect(messages[0]?.role).toBe('system')
     expect(messages[1]).toEqual({ role: 'user', content: 'please use $same' })
+    await expect(
+      options.tools?.readSkill?.execute?.({ name: 'same' }, {} as never)
+    ).rejects.toThrow('Skill name is ambiguous')
   })
 })

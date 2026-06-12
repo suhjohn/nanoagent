@@ -39,7 +39,7 @@ No runtime, server, session manager, dependency container, package loader, or pl
 - `AgentPlugin`: transforms `RunAgentOptions`.
 - `withPlugins`: applies plugins in order.
 - `sessionPlugin`: projects session history into messages and records model output.
-- `skillsPlugin`: loads local `SKILL.md` files and injects selected skills during `onTurnPrepared`.
+- `skillsPlugin`: loads local `SKILL.md` files, injects the model-visible skill catalog, and exposes `readSkill`.
 - `skillRoots`: returns Codex-style default roots.
 - `loadSkills`: scans skill roots and returns catalog metadata.
 
@@ -73,7 +73,9 @@ Run package checks, npm dry-run, then publish when auth is present.
 allow_implicit_invocation: false
 ```
 
-`skillsPlugin` always injects catalog for implicit skills. Explicit `$name` mentions inject full matching `SKILL.md` body before last user message. Duplicate names stay unselected unless caller supplies `select`.
+`skillsPlugin` injects the catalog for implicit skills by default. The model uses the catalog to decide which skill matches the task, then calls `readSkill` with the listed name or path to load the full `SKILL.md` body before applying it.
+
+Explicit `$name` mentions still inject the full matching `SKILL.md` body before the last user message. Duplicate explicit names stay unselected unless caller supplies `select`.
 
 Default roots scan `.agents/skills`, `.claude/skills`, and `.codex/skills` from `cwd` ancestors, `$CODEX_HOME/skills`, `$HOME/.agents/skills`, and `$HOME/.claude/skills`. Missing roots are skipped.
 
