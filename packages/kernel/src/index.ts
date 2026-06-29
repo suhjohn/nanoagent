@@ -1138,7 +1138,7 @@ function executeToolCall<CONTEXT extends JsonLike>({
           toolCallId: toolCall.toolCallId,
           messages,
           abortSignal: signal,
-          experimental_context: context
+          context
         })
         if (
           typeof output !== 'object' ||

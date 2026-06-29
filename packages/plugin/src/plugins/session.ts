@@ -136,10 +136,15 @@ export function sessionPlugin(
 
     // Handle durable persistence if a persister is provided. This maps to the
     // transactional barrier in Codex where State and Events are written together.
-    ...(options?.persister && {
-      saveState: args => {
-        return Effect.tryPromise(() => options.persister!(args as any))
-      }
-    })
+    ...(options?.persister
+      ? {
+          saveState: ((args: {
+            state: AgentRunState<SessionContext>
+            events: AgentPhaseEvent[]
+          }) => {
+            return Effect.tryPromise(() => options.persister!(args as any))
+          }) as unknown as AgentPlugin<SessionContext>['saveState']
+        }
+      : {})
   }
 }

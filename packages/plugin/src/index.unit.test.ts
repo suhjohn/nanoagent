@@ -173,7 +173,7 @@ describe('withPlugins', () => {
 
     const rawResult = options.hooks?.onTurnCompleted?.(turnCompletedArgs())
     const result = await (Effect.isEffect(rawResult)
-      ? Effect.runPromise(rawResult)
+      ? Effect.runPromise(rawResult as never)
       : rawResult)
 
     expect(seen).toEqual([1])
@@ -223,7 +223,7 @@ describe('withPlugins', () => {
 
     const rawResult = options.hooks.onTurnPrepared(turnPreparedArgs())
     const result = await (Effect.isEffect(rawResult)
-      ? Effect.runPromise(rawResult)
+      ? Effect.runPromise(rawResult as never)
       : rawResult)
 
     expect(seen).toEqual([0, 1])
@@ -259,7 +259,7 @@ describe('withPlugins', () => {
 
     const rawResult = options.hooks?.onTurnCompleted?.(turnCompletedArgs())
     const result = await (Effect.isEffect(rawResult)
-      ? Effect.runPromise(rawResult)
+      ? Effect.runPromise(rawResult as never)
       : rawResult)
 
     expect(seen).toEqual([])

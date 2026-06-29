@@ -11,7 +11,7 @@ import { Effect } from 'effect'
 
 function fromAgentResult<A>(
   evaluate: () => AgentEffectResult<A, Error> | undefined
-): Effect.Effect<A, Error, never> {
+): any {
   return Effect.flatMap(
     Effect.try({
       try: evaluate,

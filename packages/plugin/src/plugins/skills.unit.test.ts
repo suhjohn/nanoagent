@@ -100,10 +100,10 @@ function baseOptions(messages: ModelMessage[]): RunAgentOptions<Context> {
   }
 }
 
-async function prepareTurn(options: RunAgentOptions<Context>) {
+async function prepareTurn(options: RunAgentOptions<Context>): Promise<any> {
   const rawResult = options.hooks.onTurnPrepared(turnPreparedArgs())
   return await (Effect.isEffect(rawResult)
-    ? Effect.runPromise(rawResult)
+    ? Effect.runPromise(rawResult as never)
     : rawResult)
 }
 

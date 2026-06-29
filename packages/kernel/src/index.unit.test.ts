@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import type { LanguageModelUsage, ToolSet } from 'ai'
-import { MockLanguageModelV3, simulateReadableStream } from 'ai/test'
 import {
+  MockLanguageModelV3,
+  MockLanguageModelV4,
+  simulateReadableStream
+} from 'ai/test'
+import {
+  type AgentModelProviders,
   type AgentSaveState,
   type AgentModelResult,
   type AgentPhase,
@@ -1031,6 +1036,16 @@ describe('runAgent unit durability scenarios', () => {
       maxOutputTokens: 7,
       temperature: 0.2
     })
+  })
+
+  test('accepts AI SDK v4 language model providers', () => {
+    const model = new MockLanguageModelV4()
+    const modelProviders: AgentModelProviders = {
+      test: () => model
+    }
+
+    expect(modelProviders.test).toBeDefined()
+    expect(model.specificationVersion).toBe('v4')
   })
 
   test('caller-emitted finish records completion source, reason, and metadata', async () => {
